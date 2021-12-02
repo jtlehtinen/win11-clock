@@ -1,4 +1,5 @@
 #pragma comment(lib, "user32.lib")
+#pragma comment(lib, "shcore.lib")
 #pragma comment(lib, "shell32.lib")
 
 #define NOMINMAX
@@ -6,6 +7,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
+#include <shellscalingapi.h>
 #include <string>
 
 constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
@@ -128,6 +130,9 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         POINT mouse;
         GetCursorPos(&mouse);
         UINT cmd = static_cast<UINT>(TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, mouse.x, mouse.y, 0, window, nullptr));
+
+        DestroyMenu(menu);
+
         if (cmd == kCmdQuit) DestroyWindow(window);
       }
       return 0;
@@ -156,15 +161,13 @@ HWND create_dummy_window(HINSTANCE instance) {
 }
 
 int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line, int show_command) {
-  UNREFERENCED_PARAMETER(ignored);
-  UNREFERENCED_PARAMETER(command_line);
-  UNREFERENCED_PARAMETER(show_command);
-
   // @NOTE: Named mutex is used to prevent multiple instances of
   // this program running at once.
   const wchar_t* guid = L"6b54d0d4-ac9f-4ce7-b1b4-daa3527c935e";
   HANDLE mutex = CreateMutexW(nullptr, true, guid);
   if (GetLastError() != ERROR_SUCCESS) return 0;
+
+  SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
 
   // @TODO: handle no locale found
   std::wstring locale = get_user_default_locale_name();
@@ -177,11 +180,6 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
 
   std::wstring short_datetime = format_current_datetime(locale, short_date, short_time);
   std::wstring long_datetime = format_current_datetime(locale, long_date, long_time);
-
-  OutputDebugStringW(short_datetime.c_str());
-  OutputDebugStringW(L"\n");
-  OutputDebugStringW(long_datetime.c_str());
-  OutputDebugStringW(L"\n");
 
   // @NOTE: Dummy window is used to have one window always present
   // even in the case when there are no "clock" windows.
