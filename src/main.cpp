@@ -1,7 +1,11 @@
+// @TODO: clean up
+
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shcore.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "user32.lib")
+#pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "dwrite.lib")
 
 #define _CRT_SECURE_NO_WARNINGS
 #define NOMINMAX
@@ -11,6 +15,9 @@
 #include <shellapi.h>
 #include <shellscalingapi.h>
 #include <shlobj.h>
+#include <dwrite.h>
+#include <d2d1.h>
+
 #include <stdint.h>
 #include <stdio.h>
 #include <string>
@@ -65,6 +72,10 @@ struct App {
 
   std::vector<HWND> clock_windows;
   HWND dummy_window = nullptr;
+
+  ID2D1Factory* d2d_factory = nullptr;
+  IDWriteFactory* dwrite_factory = nullptr;
+  IDWriteTextFormat* text_format = nullptr;
 };
 
 bool save_settings(const std::wstring& filename, Settings settings) {
@@ -439,6 +450,13 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   app.dummy_window = create_dummy_window(instance);
   if (app.dummy_window) {
     SetWindowLongPtrW(app.dummy_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
+
+    // @TODO: error checking
+    D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &app.d2d_factory);
+    DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&app.dwrite_factory));
+    app.dwrite_factory->CreateTextFormat(L"Segoe UI Variable", nullptr, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, app.format.locale.c_str(), &app.text_format);
+    app.text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+    app.text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
     app.monitors = get_display_monitors();
 
