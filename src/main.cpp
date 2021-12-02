@@ -152,7 +152,7 @@ bool add_notification_area_icon(HWND window) {
   return Shell_NotifyIconW(NIM_ADD, &data) == TRUE;
 }
 
-void remove_notification_are_icon(HWND window) {
+void remove_notification_area_icon(HWND window) {
   NOTIFYICONDATAW data = { };
   data.cbSize = sizeof(data);
   data.hWnd = window;
@@ -167,7 +167,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
 
   switch (message) {
     case WM_DESTROY: {
-      remove_notification_are_icon(window);
+      remove_notification_area_icon(window);
       PostQuitMessage(0);
       return 0;
     }
