@@ -1,6 +1,7 @@
-#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shcore.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "user32.lib")
 
 #define _CRT_SECURE_NO_WARNINGS
 #define NOMINMAX
@@ -13,10 +14,27 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string>
+#include <vector>
 
 constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
 
 enum class Position : uint8_t { BottomRight, BottomLeft, TopRight, TopLeft };
+
+struct Int2 { int x, y; };
+
+struct Float2 { float x, y; };
+
+struct Monitor {
+  HMONITOR handle = nullptr;
+  Int2 position = { };
+  Int2 size = { };
+  Float2 dpi = { };
+
+  bool is_primary() const {
+    // https://devblogs.microsoft.com/oldnewthing/20070809-00/?p=25643
+    return position.x == 0 && position.y == 0;
+  }
+};
 
 struct Settings {
   Position position = Position::BottomRight;
@@ -43,6 +61,9 @@ struct App {
   std::wstring long_time;
   std::wstring long_datetime;
 
+  std::vector<Monitor> monitors;
+
+  std::vector<HWND> clock_windows;
   HWND dummy_window = nullptr;
 };
 
@@ -159,6 +180,97 @@ std::wstring format_current_datetime(const std::wstring& locale, const std::wstr
   SYSTEMTIME time;
   GetLocalTime(&time);
   return format_time(time, locale, time_format) + L"\n" + format_date(time, locale, date_format);
+}
+
+Int2 compute_clock_window_size(Float2 dpi) {
+  constexpr float base_width = 200.0f;
+  constexpr float base_height = 48.0f;
+  return {static_cast<int>(base_width * dpi.x + 0.5f), static_cast<int>(base_height * dpi.y + 0.5f)};
+}
+
+Int2 compute_clock_window_position(Int2 window_size, Int2 monitor_position, Int2 monitor_size, Position position) {
+  if (position == Position::BottomLeft)
+    return {monitor_position.x, monitor_position.y + monitor_size.y - window_size.y};
+
+  if (position == Position::BottomRight)
+    return {monitor_position.x + monitor_size.x - window_size.x, monitor_position.y + monitor_size.y - window_size.y};
+
+  if (position == Position::TopLeft)
+    return {monitor_position.x, 0};
+
+  return {monitor_position.x + monitor_size.x - window_size.x, 0};
+ }
+
+ Float2 get_dpi_scale(HMONITOR monitor) {
+  UINT dpix, dpiy;
+  if (GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpix, &dpiy) != S_OK) return {1.0f, 1.0f};
+
+  return {static_cast<float>(dpix) / 96.0f, static_cast<float>(dpiy) / 96.0f};
+}
+
+std::vector<Monitor> get_display_monitors() {
+  auto callback = [](HMONITOR monitor, HDC dc, LPRECT rect, LPARAM lparam) {
+    auto monitors = reinterpret_cast<std::vector<Monitor>*>(lparam);
+
+    const Int2 position = { rect->left, rect->top };
+    const Int2 size = { rect->right - rect->left, rect->bottom - rect->top };
+    const Float2 dpi = get_dpi_scale(monitor);
+
+    monitors->push_back(Monitor{ .handle = monitor, .position = position, .size = size, .dpi = dpi });
+
+    return TRUE;
+  };
+
+  std::vector<Monitor> result;
+  EnumDisplayMonitors(nullptr, nullptr, callback, reinterpret_cast<LPARAM>(&result));
+  return result;
+}
+
+Int2 window_client_size(HWND window) {
+  RECT r;
+  GetClientRect(window, &r);
+  return {r.right - r.left, r.bottom - r.top};
+}
+
+LRESULT CALLBACK window_callback(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+  App* app = reinterpret_cast<App*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+
+  if (app) {
+    switch (message) {
+      case WM_PAINT: {
+        const Int2 size = window_client_size(window);
+
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(window, &ps);
+        PatBlt(dc, 0, 0, size.x, size.y, WHITENESS);
+        EndPaint(window, &ps);
+        return 0;
+      }
+    }
+  }
+
+  return DefWindowProcW(window, message, wparam, lparam);
+}
+
+HWND create_clock_window(HINSTANCE instance) {
+  static bool registered = false;
+  if (!registered) {
+    registered = true;
+
+    WNDCLASSW wc = { };
+    wc.lpfnWndProc = window_callback;
+    wc.hInstance = instance;
+    wc.lpszClassName = L"win11-clock-classname";
+    RegisterClassW(&wc);
+  }
+
+  constexpr DWORD window_style = WS_POPUP;
+  constexpr DWORD extended_window_style = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED;
+
+  HWND window = CreateWindowExW(extended_window_style, L"win11-clock-classname", L"", window_style, 0, 0, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, instance, nullptr);
+  SetLayeredWindowAttributes(window, RGB(0, 0, 0), 0, LWA_COLORKEY);
+
+  return window;
 }
 
 bool add_notification_area_icon(HWND window) {
@@ -328,6 +440,23 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   if (app.dummy_window) {
     SetWindowLongPtrW(app.dummy_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
 
+    app.monitors = get_display_monitors();
+
+    const size_t monitor_count = app.monitors.size();
+    for (size_t i = 0; i < monitor_count; ++i) {
+      const Monitor& monitor = app.monitors[i];
+      HWND window = create_clock_window(instance);
+      SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
+
+      const Int2 size = compute_clock_window_size(monitor.dpi);
+      const Int2 position = compute_clock_window_position(size, monitor.position, monitor.size, app.settings.position);
+
+      SetWindowPos(window, HWND_TOPMOST, position.x, position.y, size.x, size.y, SWP_NOACTIVATE);
+      ShowWindow(window, SW_SHOW);
+
+      app.clock_windows.push_back(window);
+    }
+
     const UINT_PTR timer = SetTimer(app.dummy_window, 0, 1000, nullptr);
 
     MSG msg = { };
@@ -335,6 +464,9 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
       TranslateMessage(&msg);
       DispatchMessageW(&msg);
     }
+
+
+    // @NOTE: windows will do the clean up anyways...
 
     save_settings(settings_filename, app.settings);
 
