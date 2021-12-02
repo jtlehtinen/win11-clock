@@ -2,15 +2,69 @@
 #pragma comment(lib, "shcore.lib")
 #pragma comment(lib, "shell32.lib")
 
+#define _CRT_SECURE_NO_WARNINGS
 #define NOMINMAX
 #define VC_EXTRALEAN
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
 #include <shellscalingapi.h>
+#include <shlobj.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string>
 
 constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
+
+enum class Position : uint8_t { BottomRight, BottomLeft, TopRight, TopLeft };
+
+struct Settings {
+  Position position = Position::BottomRight;
+  bool on_primary_display = false;
+  bool long_date = false;
+  bool long_time = false;
+};
+
+bool save_settings(const std::wstring& filename, Settings settings) {
+  FILE* f = _wfopen(filename.c_str(), L"wb");
+  if (!f) return false;
+
+  uint8_t state[4] = {
+    static_cast<uint8_t>(settings.position),
+    static_cast<uint8_t>(settings.on_primary_display),
+    static_cast<uint8_t>(settings.long_date),
+    static_cast<uint8_t>(settings.long_time)
+  };
+
+  bool ok = (fwrite(state, sizeof(state), 1, f) == 1);
+  fclose(f);
+  return ok;
+}
+
+Settings load_settings(const std::wstring& filename) {
+  FILE* f = _wfopen(filename.c_str(), L"rb");
+  if (!f) return Settings{};
+
+  uint8_t state[4] = { };
+  bool ok = (fread(state, sizeof(state), 1, f) == 1);
+  fclose(f);
+
+  if (!ok) return Settings{ };
+
+  return Settings{
+    .position = static_cast<Position>(state[0]),
+    .on_primary_display = static_cast<bool>(state[1]),
+    .long_date = static_cast<bool>(state[2]),
+    .long_time = static_cast<bool>(state[3]),
+  };
+}
+
+std::wstring get_temp_directory() {
+  wchar_t buffer[MAX_PATH + 1];
+  if (GetTempPathW(MAX_PATH + 1, buffer) == 0) return L"";
+
+  return buffer;
+}
 
 std::wstring get_user_default_locale_name() {
   wchar_t buffer[LOCALE_NAME_MAX_LENGTH];
@@ -169,6 +223,11 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
 
   SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
 
+  const std::wstring temp_directory = get_temp_directory() + L"Win11Clock\\";
+  const std::wstring save_filename = temp_directory + L"settings.dat";
+  SHCreateDirectoryExW(nullptr, temp_directory.c_str(), nullptr);
+  Settings settings = load_settings(save_filename);
+
   // @TODO: handle no locale found
   std::wstring locale = get_user_default_locale_name();
 
@@ -193,6 +252,8 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
+
+  save_settings(save_filename, settings);
 
   KillTimer(dummy_window, timer);
   ReleaseMutex(mutex);
