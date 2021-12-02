@@ -156,6 +156,12 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   UNREFERENCED_PARAMETER(command_line);
   UNREFERENCED_PARAMETER(show_command);
 
+  // @NOTE: Named mutex is used to prevent multiple instances of
+  // this program running at once.
+  const wchar_t* guid = L"6b54d0d4-ac9f-4ce7-b1b4-daa3527c935e";
+  HANDLE mutex = CreateMutexW(nullptr, true, guid);
+  if (GetLastError() != ERROR_SUCCESS) return 0;
+
   // @TODO: handle no locale found
   std::wstring locale = get_user_default_locale_name();
 
@@ -183,6 +189,8 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
+
+  ReleaseMutex(mutex);
 
   return 0;
 }
