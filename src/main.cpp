@@ -202,10 +202,10 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         constexpr UINT kCmdPositionBottomRight = 3;
         constexpr UINT kCmdPositionTopLeft = 4;
         constexpr UINT kCmdPositionTopRight = 5;
-        constexpr UINT kCmdFormatLongDate = 6;
-        constexpr UINT kCmdFormatShortDate = 7;
-        constexpr UINT kCmdFormatLongTime = 8;
-        constexpr UINT kCmdFormatShortTime = 9;
+        constexpr UINT kCmdFormatShortDate = 6;
+        constexpr UINT kCmdFormatLongDate = 7;
+        constexpr UINT kCmdFormatShortTime = 8;
+        constexpr UINT kCmdFormatLongTime = 9;
         constexpr UINT kCmdQuit = 255;
 
         if (lparam == WM_RBUTTONUP) {
@@ -231,7 +231,6 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(time_menu), L"Time Format");
 
           AppendMenuW(menu, checked(app->settings.on_primary_display), kCmdPrimaryDisplay, L"On Primary Display");
-
           AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
           AppendMenuW(menu, MF_STRING, kCmdQuit, L"Exit");
 
@@ -246,7 +245,18 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           DestroyMenu(time_menu);
           DestroyMenu(date_menu);
 
-          if (cmd == kCmdQuit) DestroyWindow(window);
+          switch (cmd) {
+            case kCmdQuit: DestroyWindow(window); break;
+            case kCmdPrimaryDisplay: app->settings.on_primary_display = !app->settings.on_primary_display; break;
+            case kCmdPositionBottomLeft: app->settings.position = Position::BottomLeft; break;
+            case kCmdPositionBottomRight: app->settings.position = Position::BottomRight; break;
+            case kCmdPositionTopLeft: app->settings.position = Position::TopLeft; break;
+            case kCmdPositionTopRight: app->settings.position = Position::TopRight; break;
+            case kCmdFormatLongDate: [[fallthrough]];
+            case kCmdFormatShortDate: app->settings.long_date = !app->settings.long_date; break;
+            case kCmdFormatShortTime: [[fallthrough]];
+            case kCmdFormatLongTime: app->settings.long_time = !app->settings.long_time; break;
+          }
         }
         return 0;
       }
