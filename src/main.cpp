@@ -1,4 +1,7 @@
-// @TODO: error handling, clean up
+// @TODO: clean this mess
+// @TODO: error handling
+// @TODO: handle WM_DISPLAYCHANGE, WM_DPICHANGED, WM_INPUTLANGCHANGE, WM_DEVICECHANGE, WM_TIMECHANGE?
+// @TODO: hide when fullscreen window?
 
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shcore.lib")
@@ -139,6 +142,14 @@ Settings load_settings(const std::wstring& filename) {
   };
 }
 
+uint32_t find_primary_monitor_index(const App& app) {
+  const size_t count = app.monitors.size();
+  for (size_t i = 0; i < count; ++i) {
+    if (app.monitors[i].is_primary()) return static_cast<uint32_t>(i);
+  }
+  return UINT32_MAX;
+}
+
 std::wstring get_temp_directory() {
   wchar_t buffer[MAX_PATH + 1];
   if (GetTempPathW(MAX_PATH + 1, buffer) == 0) return L"";
@@ -228,9 +239,9 @@ Int2 compute_clock_window_position(Int2 window_size, Int2 monitor_position, Int2
     return {monitor_position.x + monitor_size.x - window_size.x, monitor_position.y + monitor_size.y - window_size.y};
 
   if (position == Position::TopLeft)
-    return {monitor_position.x, 0};
+    return {monitor_position.x, monitor_position.y};
 
-  return {monitor_position.x + monitor_size.x - window_size.x, 0};
+  return {monitor_position.x + monitor_size.x - window_size.x, monitor_position.y};
  }
 
  Float2 get_dpi_scale(HMONITOR monitor) {
@@ -262,6 +273,30 @@ Int2 window_client_size(HWND window) {
   RECT r;
   GetClientRect(window, &r);
   return {r.right - r.left, r.bottom - r.top};
+}
+
+void settings_changed(App* app) {
+  const size_t count = app->clock_windows.size();
+
+  for (size_t i = 0; i < count; ++i) {
+    HWND window = app->clock_windows[i];
+    const Monitor& monitor = app->monitors[i];
+
+    const Int2 size = window_client_size(window);
+    const Int2 position = compute_clock_window_position(size, monitor.position, monitor.size, app->settings.position);
+    SetWindowPos(window, HWND_TOPMOST, position.x, position.y, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
+  }
+
+  SYSTEMTIME time;
+  GetLocalTime(&time);
+  app->short_date = format_date(time, app->format.locale, app->format.short_date);
+  app->short_time = format_time(time, app->format.locale, app->format.short_time);
+  app->long_date = format_date(time, app->format.locale, app->format.long_date);
+  app->long_time = format_time(time, app->format.locale, app->format.long_time);
+
+  for (HWND window : app->clock_windows) {
+    InvalidateRect(window, nullptr, FALSE);
+  }
 }
 
 LRESULT CALLBACK window_callback(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -441,6 +476,8 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
             case kCmdFormatLongTime: app->settings.long_time = true; break;
             case kCmdFormatShortTime: app->settings.long_time = false; break;
           }
+
+          settings_changed(app); // @TODO: unnecessary
         }
         return 0;
       }
@@ -491,6 +528,14 @@ DeviceDependentResources create_device_dependent_resources(HWND window, ID2D1Fac
   return result;
 }
 
+// @TODO:
+App app;
+
+void CALLBACK win_event_hook(HWINEVENTHOOK hook, DWORD event, HWND window, LONG id_object, LONG id_child, DWORD id_event_thread, DWORD event_time) {
+  for (HWND hwnd : app.clock_windows) {
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+  }
+}
 
 int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line, int show_command) {
   // @NOTE: Named mutex is used to prevent multiple instances of
@@ -500,8 +545,6 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   if (GetLastError() != ERROR_SUCCESS) return 0;
 
   SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
-
-  App app;
 
   const std::wstring temp_directory = get_temp_directory() + L"Win11Clock\\";
   const std::wstring settings_filename = temp_directory + L"settings.dat";
@@ -558,6 +601,9 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
 
     const UINT_PTR timer = SetTimer(app.dummy_window, 0, 1000, nullptr);
 
+    // @NOTE: How is the topmost if more than one wants to be?
+    HWINEVENTHOOK hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, win_event_hook, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+
     MSG msg = { };
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
       TranslateMessage(&msg);
@@ -570,6 +616,7 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
     save_settings(settings_filename, app.settings);
 
     KillTimer(app.dummy_window, timer);
+    UnhookWinEvent(hook);
   }
 
   ReleaseMutex(mutex);
