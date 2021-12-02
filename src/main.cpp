@@ -1,4 +1,4 @@
-// @TODO: clean up
+// @TODO: error handling, clean up
 
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shcore.lib")
@@ -26,6 +26,9 @@
 constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
 
 enum class Position : uint8_t { BottomRight, BottomLeft, TopRight, TopLeft };
+
+bool is_left(Position position) { return (position == Position::BottomLeft) || (position == Position::TopLeft); }
+bool is_right(Position position) { return (position == Position::BottomRight) || (position == Position::TopRight); }
 
 struct Int2 { int x, y; };
 
@@ -58,25 +61,49 @@ struct DateTimeFormat {
   std::wstring long_time;
 };
 
+struct DeviceDependentResources {
+  ID2D1HwndRenderTarget* rt = nullptr;
+  ID2D1SolidColorBrush* white_brush = nullptr;
+  ID2D1SolidColorBrush* red_brush = nullptr;
+  ID2D1SolidColorBrush* green_brush = nullptr;
+};
+
 struct App {
   DateTimeFormat format;
   Settings settings;
   std::wstring short_date;
   std::wstring short_time;
-  std::wstring short_datetime;
   std::wstring long_date;
   std::wstring long_time;
-  std::wstring long_datetime;
 
   std::vector<Monitor> monitors;
 
   std::vector<HWND> clock_windows;
+  std::vector<DeviceDependentResources> device_dependent_resources;
   HWND dummy_window = nullptr;
 
   ID2D1Factory* d2d_factory = nullptr;
   IDWriteFactory* dwrite_factory = nullptr;
   IDWriteTextFormat* text_format = nullptr;
 };
+
+uint32_t find_window_index(const App& app, HWND window) {
+  const size_t count = app.clock_windows.size();
+  for (size_t i = 0; i < count; ++i) {
+    if (window == app.clock_windows[i]) return static_cast<uint32_t>(i);
+  }
+
+  return UINT32_MAX;
+}
+
+DWRITE_TEXT_ALIGNMENT text_alignment_from_clock_position(Position position) {
+  if (position == Position::BottomLeft) return DWRITE_TEXT_ALIGNMENT_LEADING;
+  if (position == Position::BottomRight) return DWRITE_TEXT_ALIGNMENT_TRAILING;
+  if (position == Position::TopLeft) return DWRITE_TEXT_ALIGNMENT_LEADING;
+  if (position == Position::TopRight) return DWRITE_TEXT_ALIGNMENT_TRAILING;
+
+  return DWRITE_TEXT_ALIGNMENT_LEADING;
+}
 
 bool save_settings(const std::wstring& filename, Settings settings) {
   FILE* f = _wfopen(filename.c_str(), L"wb");
@@ -187,12 +214,6 @@ std::wstring format_time(SYSTEMTIME time, const std::wstring& locale, const std:
   return L"";
 }
 
-std::wstring format_current_datetime(const std::wstring& locale, const std::wstring& date_format, const std::wstring& time_format) {
-  SYSTEMTIME time;
-  GetLocalTime(&time);
-  return format_time(time, locale, time_format) + L"\n" + format_date(time, locale, date_format);
-}
-
 Int2 compute_clock_window_size(Float2 dpi) {
   constexpr float base_width = 200.0f;
   constexpr float base_height = 48.0f;
@@ -247,14 +268,54 @@ LRESULT CALLBACK window_callback(HWND window, UINT message, WPARAM wparam, LPARA
   App* app = reinterpret_cast<App*>(GetWindowLongPtrW(window, GWLP_USERDATA));
 
   if (app) {
+    // @TODO: too much?
+    SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
     switch (message) {
       case WM_PAINT: {
-        const Int2 size = window_client_size(window);
+        const uint32_t idx = find_window_index(*app, window);
+        if (idx != UINT32_MAX) {
+          ID2D1HwndRenderTarget* rt = app->device_dependent_resources[idx].rt;
+          ID2D1SolidColorBrush* white_brush = app->device_dependent_resources[idx].white_brush;
 
-        PAINTSTRUCT ps;
-        HDC dc = BeginPaint(window, &ps);
-        PatBlt(dc, 0, 0, size.x, size.y, WHITENESS);
-        EndPaint(window, &ps);
+          auto alignment = text_alignment_from_clock_position(app->settings.position);
+          if (alignment != app->text_format->GetTextAlignment()) {
+            app->text_format->SetTextAlignment(alignment);
+          }
+
+          rt->BeginDraw();
+          rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+          rt->SetTransform(D2D1::IdentityMatrix());
+          rt->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+
+          const Int2 size = window_client_size(window);
+          const Float2 dpi = app->monitors[idx].dpi;
+          const Float2 sizef = { float(size.x) / dpi.x, float(size.y) / dpi.y };
+
+          #ifdef CLOCK_DEBUG
+          ID2D1SolidColorBrush* red_brush = app->device_dependent_resources[idx].red_brush;
+          ID2D1SolidColorBrush* green_brush = app->device_dependent_resources[idx].green_brush;
+          rt->DrawLine(D2D_POINT_2F{ 0.0f, 0.0f }, D2D_POINT_2F{ sizef.x, 0.0f }, red_brush);
+          rt->DrawLine(D2D_POINT_2F{ 0.0f, sizef.y }, D2D_POINT_2F{ sizef.x, sizef.y }, green_brush);
+          rt->DrawLine(D2D_POINT_2F{ 0.0f, 0.0f }, D2D_POINT_2F{ 0.0f, sizef.y }, red_brush);
+          rt->DrawLine(D2D_POINT_2F{ sizef.x, 0.0f }, D2D_POINT_2F{ sizef.x, sizef.y }, green_brush);
+          #endif
+
+          const Position clock_position = app->settings.position;
+          const float pad_left = is_left(clock_position) ? 28.0f / dpi.x : 0.0f;
+          const float pad_right = is_right(clock_position) ? 28.0f / dpi.x : 0.0f;
+
+          D2D1_RECT_F layout_rect = D2D1::RectF(pad_left, 0.0f, sizef.x - pad_right, sizef.y);
+
+          const std::wstring& time = app->settings.long_time ? app->long_time : app->short_time;
+          const std::wstring& date = app->settings.long_date ? app->long_date : app->short_date;
+          const std::wstring& datetime = time + L"\n" + date;
+          rt->DrawText(datetime.c_str(), static_cast<UINT32>(datetime.length()), app->text_format, layout_rect, white_brush);
+
+          rt->EndDraw();
+
+          ValidateRect(window, nullptr);
+        }
         return 0;
       }
     }
@@ -388,9 +449,19 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         ValidateRect(window, nullptr);
         return 0;
 
-      case WM_TIMER:
-        OutputDebugStringA("timer fired\n");
+      case WM_TIMER: {
+        SYSTEMTIME time;
+        GetLocalTime(&time);
+        app->short_date = format_date(time, app->format.locale, app->format.short_date);
+        app->short_time = format_time(time, app->format.locale, app->format.short_time);
+        app->long_date = format_date(time, app->format.locale, app->format.long_date);
+        app->long_time = format_time(time, app->format.locale, app->format.long_time);
+
+        for (HWND hwnd : app->clock_windows) {
+          InvalidateRect(hwnd, nullptr, FALSE);
+        }
         return 0;
+      }
     }
   }
 
@@ -406,6 +477,20 @@ HWND create_dummy_window(HINSTANCE instance) {
 
   return CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 1, 1, nullptr, nullptr, instance, nullptr);
 }
+
+DeviceDependentResources create_device_dependent_resources(HWND window, ID2D1Factory* factory) {
+  const Int2 size = window_client_size(window);
+  const uint32_t width = static_cast<uint32_t>(size.x);
+  const uint32_t height = static_cast<uint32_t>(size.y);
+
+  DeviceDependentResources result;
+  factory->CreateHwndRenderTarget(D2D1::RenderTargetProperties(), D2D1::HwndRenderTargetProperties(window, D2D1::SizeU(width, height)), &result.rt);
+  result.rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &result.white_brush);
+  result.rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Red), &result.red_brush);
+  result.rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Green), &result.green_brush);
+  return result;
+}
+
 
 int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line, int show_command) {
   // @NOTE: Named mutex is used to prevent multiple instances of
@@ -436,14 +521,8 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   GetLocalTime(&time);
   app.short_date = format_date(time, app.format.locale, app.format.short_date);
   app.short_time = format_time(time, app.format.locale, app.format.short_time);
-  app.short_datetime = app.short_time + L"\n" + app.short_date;
-
   app.long_date = format_date(time, app.format.locale, app.format.long_date);
   app.long_time = format_time(time, app.format.locale, app.format.long_time);
-  app.long_datetime = app.long_time + L"\n" + app.long_date;
-
-  app.short_datetime = format_current_datetime(app.format.locale, app.format.short_date, app.format.short_time);
-  app.long_datetime = format_current_datetime(app.format.locale, app.format.long_date, app.format.long_time);
 
   // @NOTE: Dummy window is used to have one window always present
   // even in the case when there are no "clock" windows.
@@ -473,6 +552,8 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
       ShowWindow(window, SW_SHOW);
 
       app.clock_windows.push_back(window);
+
+      app.device_dependent_resources.push_back(create_device_dependent_resources(window, app.d2d_factory));
     }
 
     const UINT_PTR timer = SetTimer(app.dummy_window, 0, 1000, nullptr);
