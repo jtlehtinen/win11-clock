@@ -252,10 +252,10 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
             case kCmdPositionBottomRight: app->settings.position = Position::BottomRight; break;
             case kCmdPositionTopLeft: app->settings.position = Position::TopLeft; break;
             case kCmdPositionTopRight: app->settings.position = Position::TopRight; break;
-            case kCmdFormatLongDate: [[fallthrough]];
-            case kCmdFormatShortDate: app->settings.long_date = !app->settings.long_date; break;
-            case kCmdFormatShortTime: [[fallthrough]];
-            case kCmdFormatLongTime: app->settings.long_time = !app->settings.long_time; break;
+            case kCmdFormatLongDate:  app->settings.long_date = true; break;
+            case kCmdFormatShortDate: app->settings.long_date = false; break;
+            case kCmdFormatLongTime: app->settings.long_time = true; break;
+            case kCmdFormatShortTime: app->settings.long_time = false; break;
           }
         }
         return 0;
