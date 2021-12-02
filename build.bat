@@ -4,7 +4,7 @@ if not exist build ( mkdir build )
 if not exist build\debug ( mkdir build\debug )
 if not exist build\release ( mkdir build\release )
 
-set cflags=/nologo /Zi /std:c++20 /EHsc /Wall /WX /wd4100 /wd4710 /wd4711 /wd5039
+set cflags=/nologo /Zi /std:c++20 /EHsc /Wall /WX /wd4100 /wd4710 /wd4711 /wd4820 /wd5039
 set lflags=/INCREMENTAL:NO /subsystem:windows
 
 rc /nologo /fo resources.res src\resources.rc

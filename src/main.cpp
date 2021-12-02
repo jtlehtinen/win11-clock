@@ -25,6 +25,27 @@ struct Settings {
   bool long_time = false;
 };
 
+struct DateTimeFormat {
+  std::wstring locale;
+  std::wstring short_date;
+  std::wstring long_date;
+  std::wstring short_time;
+  std::wstring long_time;
+};
+
+struct App {
+  DateTimeFormat format;
+  Settings settings;
+  std::wstring short_date;
+  std::wstring short_time;
+  std::wstring short_datetime;
+  std::wstring long_date;
+  std::wstring long_time;
+  std::wstring long_datetime;
+
+  HWND dummy_window = nullptr;
+};
+
 bool save_settings(const std::wstring& filename, Settings settings) {
   FILE* f = _wfopen(filename.c_str(), L"wb");
   if (!f) return false;
@@ -165,40 +186,77 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
     return 0;
   }
 
-  switch (message) {
-    case WM_DESTROY: {
-      remove_notification_area_icon(window);
-      PostQuitMessage(0);
-      return 0;
-    }
+  App* app = reinterpret_cast<App*>(GetWindowLongPtrW(window, GWLP_USERDATA));
 
-    case WM_CLOCK_NOTIFY_COMMAND: {
-      constexpr UINT kCmdQuit = 255;
-
-      if (lparam == WM_RBUTTONUP) {
-        HMENU menu = CreatePopupMenu();
-
-        AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
-        AppendMenuW(menu, MF_STRING, kCmdQuit, L"Exit");
-
-        POINT mouse;
-        GetCursorPos(&mouse);
-        UINT cmd = static_cast<UINT>(TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, mouse.x, mouse.y, 0, window, nullptr));
-
-        DestroyMenu(menu);
-
-        if (cmd == kCmdQuit) DestroyWindow(window);
+  if (app) {
+    switch (message) {
+      case WM_DESTROY: {
+        remove_notification_area_icon(window);
+        PostQuitMessage(0);
+        return 0;
       }
-      return 0;
+
+      case WM_CLOCK_NOTIFY_COMMAND: {
+        constexpr UINT kCmdPrimaryDisplay = 1;
+        constexpr UINT kCmdPositionBottomLeft = 2;
+        constexpr UINT kCmdPositionBottomRight = 3;
+        constexpr UINT kCmdPositionTopLeft = 4;
+        constexpr UINT kCmdPositionTopRight = 5;
+        constexpr UINT kCmdFormatLongDate = 6;
+        constexpr UINT kCmdFormatShortDate = 7;
+        constexpr UINT kCmdFormatLongTime = 8;
+        constexpr UINT kCmdFormatShortTime = 9;
+        constexpr UINT kCmdQuit = 255;
+
+        if (lparam == WM_RBUTTONUP) {
+          auto checked = [](bool is) -> UINT { return is ? static_cast<UINT>(MF_CHECKED) : static_cast<UINT>(MF_UNCHECKED); };
+
+          HMENU menu = CreatePopupMenu();
+
+          HMENU position_menu = CreatePopupMenu();
+          AppendMenuW(position_menu, checked(app->settings.position == Position::BottomLeft), kCmdPositionBottomLeft, L"Bottom Left");
+          AppendMenuW(position_menu, checked(app->settings.position == Position::BottomRight), kCmdPositionBottomRight, L"Bottom Right");
+          AppendMenuW(position_menu, checked(app->settings.position == Position::TopLeft), kCmdPositionTopLeft, L"Top Left");
+          AppendMenuW(position_menu, checked(app->settings.position == Position::TopRight), kCmdPositionTopRight, L"Top Right");
+          AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(position_menu), L"Position");
+
+          HMENU date_menu = CreatePopupMenu();
+          AppendMenuW(date_menu, checked(!app->settings.long_date), kCmdFormatShortDate, app->short_date.c_str());
+          AppendMenuW(date_menu, checked(app->settings.long_date), kCmdFormatLongDate, app->long_date.c_str());
+          AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(date_menu), L"Date Format");
+
+          HMENU time_menu = CreatePopupMenu();
+          AppendMenuW(time_menu, checked(!app->settings.long_time), kCmdFormatShortTime, app->short_time.c_str());
+          AppendMenuW(time_menu, checked(app->settings.long_time), kCmdFormatLongTime, app->long_time.c_str());
+          AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(time_menu), L"Time Format");
+
+          AppendMenuW(menu, checked(app->settings.on_primary_display), kCmdPrimaryDisplay, L"On Primary Display");
+
+          AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+          AppendMenuW(menu, MF_STRING, kCmdQuit, L"Exit");
+
+          POINT mouse;
+          GetCursorPos(&mouse);
+          UINT cmd = static_cast<UINT>(TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, mouse.x, mouse.y, 0, window, nullptr));
+
+          DestroyMenu(menu);
+          DestroyMenu(position_menu);
+          DestroyMenu(time_menu);
+          DestroyMenu(date_menu);
+
+          if (cmd == kCmdQuit) DestroyWindow(window);
+        }
+        return 0;
+      }
+
+      case WM_PAINT:
+        ValidateRect(window, nullptr);
+        return 0;
+
+      case WM_TIMER:
+        OutputDebugStringA("timer fired\n");
+        return 0;
     }
-
-    case WM_PAINT:
-      ValidateRect(window, nullptr);
-      return 0;
-
-    case WM_TIMER:
-      OutputDebugStringA("timer fired\n");
-      return 0;
   }
 
   return DefWindowProcW(window, message, wparam, lparam);
@@ -223,39 +281,54 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
 
   SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
 
+  App app;
+
   const std::wstring temp_directory = get_temp_directory() + L"Win11Clock\\";
   const std::wstring settings_filename = temp_directory + L"settings.dat";
   SHCreateDirectoryExW(nullptr, temp_directory.c_str(), nullptr);
-  Settings settings = load_settings(settings_filename);
+  app.settings = load_settings(settings_filename);
 
   // @TODO: handle no locale found
-  std::wstring locale = get_user_default_locale_name();
+  app.format.locale = get_user_default_locale_name();
 
   // @TODO: handle no format found
-  std::wstring short_date = get_date_format(locale, DATE_SHORTDATE);
-  std::wstring long_date = get_date_format(locale, DATE_LONGDATE);
-  std::wstring short_time = get_time_format(locale, TIME_NOSECONDS);
-  std::wstring long_time = get_time_format(locale, 0);
+  app.format.short_date = get_date_format(app.format.locale, DATE_SHORTDATE);
+  app.format.long_date = get_date_format(app.format.locale, DATE_LONGDATE);
+  app.format.short_time = get_time_format(app.format.locale, TIME_NOSECONDS);
+  app.format.long_time = get_time_format(app.format.locale, 0);
 
-  std::wstring short_datetime = format_current_datetime(locale, short_date, short_time);
-  std::wstring long_datetime = format_current_datetime(locale, long_date, long_time);
+  SYSTEMTIME time;
+  GetLocalTime(&time);
+  app.short_date = format_date(time, app.format.locale, app.format.short_date);
+  app.short_time = format_time(time, app.format.locale, app.format.short_time);
+  app.short_datetime = app.short_time + L"\n" + app.short_date;
+
+  app.long_date = format_date(time, app.format.locale, app.format.long_date);
+  app.long_time = format_time(time, app.format.locale, app.format.long_time);
+  app.long_datetime = app.long_time + L"\n" + app.long_date;
+
+  app.short_datetime = format_current_datetime(app.format.locale, app.format.short_date, app.format.short_time);
+  app.long_datetime = format_current_datetime(app.format.locale, app.format.long_date, app.format.long_time);
 
   // @NOTE: Dummy window is used to have one window always present
   // even in the case when there are no "clock" windows.
-  HWND dummy_window = create_dummy_window(instance);
-  if (!dummy_window) return 1;
+  app.dummy_window = create_dummy_window(instance);
+  if (app.dummy_window) {
+    SetWindowLongPtrW(app.dummy_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
 
-  const UINT_PTR timer = SetTimer(dummy_window, 0, 1000, nullptr);
+    const UINT_PTR timer = SetTimer(app.dummy_window, 0, 1000, nullptr);
 
-  MSG msg = { };
-  while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-    TranslateMessage(&msg);
-    DispatchMessageW(&msg);
+    MSG msg = { };
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+      TranslateMessage(&msg);
+      DispatchMessageW(&msg);
+    }
+
+    save_settings(settings_filename, app.settings);
+
+    KillTimer(app.dummy_window, timer);
   }
 
-  save_settings(settings_filename, settings);
-
-  KillTimer(dummy_window, timer);
   ReleaseMutex(mutex);
 
   return 0;
