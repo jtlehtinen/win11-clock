@@ -224,9 +224,9 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
 
   const std::wstring temp_directory = get_temp_directory() + L"Win11Clock\\";
-  const std::wstring save_filename = temp_directory + L"settings.dat";
+  const std::wstring settings_filename = temp_directory + L"settings.dat";
   SHCreateDirectoryExW(nullptr, temp_directory.c_str(), nullptr);
-  Settings settings = load_settings(save_filename);
+  Settings settings = load_settings(settings_filename);
 
   // @TODO: handle no locale found
   std::wstring locale = get_user_default_locale_name();
@@ -253,7 +253,7 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
     DispatchMessageW(&msg);
   }
 
-  save_settings(save_filename, settings);
+  save_settings(settings_filename, settings);
 
   KillTimer(dummy_window, timer);
   ReleaseMutex(mutex);
