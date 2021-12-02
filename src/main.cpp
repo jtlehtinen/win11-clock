@@ -128,7 +128,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         POINT mouse;
         GetCursorPos(&mouse);
         UINT cmd = static_cast<UINT>(TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, mouse.x, mouse.y, 0, window, nullptr));
-        if (cmd == kCmdQuit) PostQuitMessage(0);
+        if (cmd == kCmdQuit) DestroyWindow(window);
       }
       return 0;
     }
