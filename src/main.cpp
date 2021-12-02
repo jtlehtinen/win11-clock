@@ -235,6 +235,8 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
           AppendMenuW(menu, MF_STRING, kCmdQuit, L"Exit");
 
+          SetForegroundWindow(window);
+
           POINT mouse;
           GetCursorPos(&mouse);
           UINT cmd = static_cast<UINT>(TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, mouse.x, mouse.y, 0, window, nullptr));
