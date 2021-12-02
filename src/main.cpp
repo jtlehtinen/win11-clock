@@ -136,6 +136,10 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
     case WM_PAINT:
       ValidateRect(window, nullptr);
       return 0;
+
+    case WM_TIMER:
+      OutputDebugStringA("timer fired\n");
+      return 0;
   }
 
   return DefWindowProcW(window, message, wparam, lparam);
@@ -184,12 +188,15 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   HWND dummy_window = create_dummy_window(instance);
   if (!dummy_window) return 1;
 
+  const UINT_PTR timer = SetTimer(dummy_window, 0, 1000, nullptr);
+
   MSG msg = { };
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
 
+  KillTimer(dummy_window, timer);
   ReleaseMutex(mutex);
 
   return 0;
