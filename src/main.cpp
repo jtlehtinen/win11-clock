@@ -1,10 +1,14 @@
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "shell32.lib")
+
 #define NOMINMAX
 #define VC_EXTRALEAN
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <stdio.h>
+#include <shellapi.h>
 #include <string>
-#include <vector>
+
+constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
 
 std::wstring get_user_default_locale_name() {
   wchar_t buffer[LOCALE_NAME_MAX_LENGTH];
@@ -80,22 +84,86 @@ std::wstring format_current_datetime(const std::wstring& locale, const std::wstr
   return format_time(time, locale, time_format) + L"\n" + format_date(time, locale, date_format);
 }
 
+bool add_notification_area_icon(HWND window) {
+  NOTIFYICONDATAW data = { };
+  data.cbSize = sizeof(data);
+  data.hWnd = window;
+  data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+  data.uCallbackMessage = WM_CLOCK_NOTIFY_COMMAND;
+  data.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
+  wcscpy_s(data.szTip, std::size(data.szTip), L"win11-clock");
+
+  return Shell_NotifyIconW(NIM_ADD, &data) == TRUE;
+}
+
+void remove_notification_are_icon(HWND window) {
+  NOTIFYICONDATAW data = { };
+  data.cbSize = sizeof(data);
+  data.hWnd = window;
+  Shell_NotifyIconW(NIM_DELETE, &data);
+}
+
+LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+  if (message == WM_CREATE) {
+    add_notification_area_icon(window);
+    return 0;
+  }
+
+  switch (message) {
+    case WM_DESTROY: {
+      remove_notification_are_icon(window);
+      PostQuitMessage(0);
+      return 0;
+    }
+
+    case WM_CLOCK_NOTIFY_COMMAND: {
+      constexpr UINT kCmdQuit = 255;
+
+      if (lparam == WM_RBUTTONUP) {
+        HMENU menu = CreatePopupMenu();
+
+        AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(menu, MF_STRING, kCmdQuit, L"Exit");
+
+        POINT mouse;
+        GetCursorPos(&mouse);
+        UINT cmd = static_cast<UINT>(TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, mouse.x, mouse.y, 0, window, nullptr));
+        if (cmd == kCmdQuit) PostQuitMessage(0);
+      }
+      return 0;
+    }
+
+    case WM_PAINT:
+      ValidateRect(window, nullptr);
+      return 0;
+  }
+
+  return DefWindowProcW(window, message, wparam, lparam);
+}
+
+HWND create_dummy_window(HINSTANCE instance) {
+  WNDCLASSW wc = { };
+  wc.lpfnWndProc = dummy_window_callback;
+  wc.hInstance = instance;
+  wc.lpszClassName = L"win11-clock-dummy-classname";
+  RegisterClassW(&wc);
+
+  return CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 1, 1, nullptr, nullptr, instance, nullptr);
+}
+
 int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line, int show_command) {
-  UNREFERENCED_PARAMETER(instance);
   UNREFERENCED_PARAMETER(ignored);
   UNREFERENCED_PARAMETER(command_line);
   UNREFERENCED_PARAMETER(show_command);
 
-  // @TODO: what to do if no locale found? can't use default either,
-  // since there is no guarantee that exists within the system?
-  std::wstring locale = get_user_default_locale_name(); // default: L"en-FI"?
+  // @TODO: handle no locale found
+  std::wstring locale = get_user_default_locale_name();
 
-  // @TODO: what to do if no formats found? can't use default either,
-  // since there is no guarantee that exists within the system?
-  std::wstring short_date = get_date_format(locale, DATE_SHORTDATE); // default: L"dd/MM/yyyy"?
-  std::wstring long_date = get_date_format(locale, DATE_LONGDATE); // default: L"dddd, d MMMM yyyy"?
-  std::wstring short_time = get_time_format(locale, TIME_NOSECONDS); // default: L"H.mm"?
-  std::wstring long_time = get_time_format(locale, 0); // default: L"H.mm.ss"?
+  // @TODO: handle no format found
+  std::wstring short_date = get_date_format(locale, DATE_SHORTDATE);
+  std::wstring long_date = get_date_format(locale, DATE_LONGDATE);
+  std::wstring short_time = get_time_format(locale, TIME_NOSECONDS);
+  std::wstring long_time = get_time_format(locale, 0);
 
   std::wstring short_datetime = format_current_datetime(locale, short_date, short_time);
   std::wstring long_datetime = format_current_datetime(locale, long_date, long_time);
@@ -104,6 +172,17 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   OutputDebugStringW(L"\n");
   OutputDebugStringW(long_datetime.c_str());
   OutputDebugStringW(L"\n");
+
+  // @NOTE: Dummy window is used to have one window always present
+  // even in the case when there are no "clock" windows.
+  HWND dummy_window = create_dummy_window(instance);
+  if (!dummy_window) return 1;
+
+  MSG msg = { };
+  while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    TranslateMessage(&msg);
+    DispatchMessageW(&msg);
+  }
 
   return 0;
 }
