@@ -2,6 +2,7 @@
 // @TODO: error handling
 // @TODO: handle WM_DISPLAYCHANGE, WM_DPICHANGED, WM_INPUTLANGCHANGE, WM_DEVICECHANGE, WM_TIMECHANGE?
 // @TODO: hide when fullscreen window?
+// @TODO: timer should be one minute or one second depending on the displayed time format
 
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shcore.lib")
@@ -10,10 +11,8 @@
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 
-#define _CRT_SECURE_NO_WARNINGS
-#define NOMINMAX
-#define VC_EXTRALEAN
-#define WIN32_LEAN_AND_MEAN
+#include "utils.h"
+
 #include <windows.h>
 #include <shellapi.h>
 #include <shellscalingapi.h>
@@ -22,39 +21,10 @@
 #include <d2d1.h>
 
 #include <stdint.h>
-#include <stdio.h>
 #include <string>
 #include <vector>
 
 constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
-
-enum class Position : uint8_t { BottomRight, BottomLeft, TopRight, TopLeft };
-
-bool is_left(Position position) { return (position == Position::BottomLeft) || (position == Position::TopLeft); }
-bool is_right(Position position) { return (position == Position::BottomRight) || (position == Position::TopRight); }
-
-struct Int2 { int x, y; };
-
-struct Float2 { float x, y; };
-
-struct Monitor {
-  HMONITOR handle = nullptr;
-  Int2 position = { };
-  Int2 size = { };
-  Float2 dpi = { };
-
-  bool is_primary() const {
-    // https://devblogs.microsoft.com/oldnewthing/20070809-00/?p=25643
-    return position.x == 0 && position.y == 0;
-  }
-};
-
-struct Settings {
-  Position position = Position::BottomRight;
-  bool on_primary_display = false;
-  bool long_date = false;
-  bool long_time = false;
-};
 
 struct DateTimeFormat {
   std::wstring locale;
@@ -108,121 +78,12 @@ DWRITE_TEXT_ALIGNMENT text_alignment_from_clock_position(Position position) {
   return DWRITE_TEXT_ALIGNMENT_LEADING;
 }
 
-bool save_settings(const std::wstring& filename, Settings settings) {
-  FILE* f = _wfopen(filename.c_str(), L"wb");
-  if (!f) return false;
-
-  uint8_t state[4] = {
-    static_cast<uint8_t>(settings.position),
-    static_cast<uint8_t>(settings.on_primary_display),
-    static_cast<uint8_t>(settings.long_date),
-    static_cast<uint8_t>(settings.long_time)
-  };
-
-  bool ok = (fwrite(state, sizeof(state), 1, f) == 1);
-  fclose(f);
-  return ok;
-}
-
-Settings load_settings(const std::wstring& filename) {
-  FILE* f = _wfopen(filename.c_str(), L"rb");
-  if (!f) return Settings{};
-
-  uint8_t state[4] = { };
-  bool ok = (fread(state, sizeof(state), 1, f) == 1);
-  fclose(f);
-
-  if (!ok) return Settings{ };
-
-  return Settings{
-    .position = static_cast<Position>(state[0]),
-    .on_primary_display = static_cast<bool>(state[1]),
-    .long_date = static_cast<bool>(state[2]),
-    .long_time = static_cast<bool>(state[3]),
-  };
-}
-
 uint32_t find_primary_monitor_index(const App& app) {
   const size_t count = app.monitors.size();
   for (size_t i = 0; i < count; ++i) {
     if (app.monitors[i].is_primary()) return static_cast<uint32_t>(i);
   }
   return UINT32_MAX;
-}
-
-std::wstring get_temp_directory() {
-  wchar_t buffer[MAX_PATH + 1];
-  if (GetTempPathW(MAX_PATH + 1, buffer) == 0) return L"";
-
-  return buffer;
-}
-
-std::wstring get_user_default_locale_name() {
-  wchar_t buffer[LOCALE_NAME_MAX_LENGTH];
-  if (GetUserDefaultLocaleName(buffer, static_cast<int>(std::size(buffer))) == 0) return L"";
-  return buffer;
-}
-
-std::wstring get_date_format(const std::wstring& locale, DWORD format_flag) {
-  auto callback = [](LPWSTR format_string, CALID calendar_id, LPARAM lparam) -> BOOL {
-    *reinterpret_cast<std::wstring*>(lparam) = format_string;
-    return FALSE; // @NOTE: We only care about the first one.
-  };
-
-  std::wstring result;
-  EnumDateFormatsExEx(callback, locale.c_str(), format_flag, reinterpret_cast<LPARAM>(&result));
-  return result;
-}
-
-std::wstring get_time_format(const std::wstring& locale, DWORD format_flag) {
-  auto callback = [](LPWSTR format_string, LPARAM lparam) -> BOOL {
-    *reinterpret_cast<std::wstring*>(lparam) = format_string;
-    return FALSE; // @NOTE: We only care about the first one.
-  };
-
-  std::wstring result;
-  EnumTimeFormatsEx(callback, locale.c_str(), format_flag, reinterpret_cast<LPARAM>(&result));
-  return result;
-}
-
-std::wstring format_date(SYSTEMTIME time, const std::wstring& locale, const std::wstring& date_format) {
-  constexpr int stack_buffer_size = 128;
-  wchar_t stack_buffer[stack_buffer_size];
-
-  if (GetDateFormatEx(locale.c_str(), 0, &time, date_format.c_str(), stack_buffer, stack_buffer_size, nullptr) != 0)
-    return stack_buffer;
-
-  if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
-    int required = GetDateFormatEx(locale.c_str(), 0, &time, date_format.c_str(), nullptr, 0, nullptr);
-    int required_no_null = required - 1;
-
-    std::wstring buffer(static_cast<size_t>(required_no_null), '\0'); // @NOTE: Since C++11 always allocates +1 for null
-    GetDateFormatEx(locale.c_str(), 0, &time, date_format.c_str(), buffer.data(), required, nullptr);
-
-    return buffer;
-  }
-
-  return L"";
-}
-
-std::wstring format_time(SYSTEMTIME time, const std::wstring& locale, const std::wstring& time_format) {
-  constexpr int stack_buffer_size = 128;
-  wchar_t stack_buffer[stack_buffer_size];
-
-  if (GetTimeFormatEx(locale.c_str(), 0, &time, time_format.c_str(), stack_buffer, stack_buffer_size) != 0)
-    return stack_buffer;
-
-  if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
-    int required = GetTimeFormatEx(locale.c_str(), 0, &time, time_format.c_str(), nullptr, 0);
-    int required_no_null = required - 1;
-
-    std::wstring buffer(static_cast<size_t>(required_no_null), '\0'); // @NOTE: Since C++11 always allocates +1 for null
-    GetTimeFormatEx(locale.c_str(), 0, &time, time_format.c_str(), buffer.data(), required);
-
-    return buffer;
-  }
-
-  return L"";
 }
 
 Int2 compute_clock_window_size(Float2 dpi) {
@@ -242,37 +103,6 @@ Int2 compute_clock_window_position(Int2 window_size, Int2 monitor_position, Int2
     return {monitor_position.x, monitor_position.y};
 
   return {monitor_position.x + monitor_size.x - window_size.x, monitor_position.y};
- }
-
- Float2 get_dpi_scale(HMONITOR monitor) {
-  UINT dpix, dpiy;
-  if (GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpix, &dpiy) != S_OK) return {1.0f, 1.0f};
-
-  return {static_cast<float>(dpix) / 96.0f, static_cast<float>(dpiy) / 96.0f};
-}
-
-std::vector<Monitor> get_display_monitors() {
-  auto callback = [](HMONITOR monitor, HDC dc, LPRECT rect, LPARAM lparam) {
-    auto monitors = reinterpret_cast<std::vector<Monitor>*>(lparam);
-
-    const Int2 position = { rect->left, rect->top };
-    const Int2 size = { rect->right - rect->left, rect->bottom - rect->top };
-    const Float2 dpi = get_dpi_scale(monitor);
-
-    monitors->push_back(Monitor{ .handle = monitor, .position = position, .size = size, .dpi = dpi });
-
-    return TRUE;
-  };
-
-  std::vector<Monitor> result;
-  EnumDisplayMonitors(nullptr, nullptr, callback, reinterpret_cast<LPARAM>(&result));
-  return result;
-}
-
-Int2 window_client_size(HWND window) {
-  RECT r;
-  GetClientRect(window, &r);
-  return {r.right - r.left, r.bottom - r.top};
 }
 
 void settings_changed(App* app) {
@@ -282,17 +112,17 @@ void settings_changed(App* app) {
     HWND window = app->clock_windows[i];
     const Monitor& monitor = app->monitors[i];
 
-    const Int2 size = window_client_size(window);
+    const Int2 size = utils::window_client_size(window);
     const Int2 position = compute_clock_window_position(size, monitor.position, monitor.size, app->settings.position);
     SetWindowPos(window, HWND_TOPMOST, position.x, position.y, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
   }
 
   SYSTEMTIME time;
   GetLocalTime(&time);
-  app->short_date = format_date(time, app->format.locale, app->format.short_date);
-  app->short_time = format_time(time, app->format.locale, app->format.short_time);
-  app->long_date = format_date(time, app->format.locale, app->format.long_date);
-  app->long_time = format_time(time, app->format.locale, app->format.long_time);
+  app->short_date = utils::format_date(time, app->format.locale, app->format.short_date);
+  app->short_time = utils::format_time(time, app->format.locale, app->format.short_time);
+  app->long_date = utils::format_date(time, app->format.locale, app->format.long_date);
+  app->long_time = utils::format_time(time, app->format.locale, app->format.long_time);
 
   for (HWND window : app->clock_windows) {
     InvalidateRect(window, nullptr, FALSE);
@@ -323,7 +153,7 @@ LRESULT CALLBACK window_callback(HWND window, UINT message, WPARAM wparam, LPARA
           rt->SetTransform(D2D1::IdentityMatrix());
           rt->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
-          const Int2 size = window_client_size(window);
+          const Int2 size = utils::window_client_size(window);
           const Float2 dpi = app->monitors[idx].dpi;
           const Float2 sizef = { float(size.x) / dpi.x, float(size.y) / dpi.y };
 
@@ -482,17 +312,19 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         return 0;
       }
 
-      case WM_PAINT:
-        ValidateRect(window, nullptr);
-        return 0;
+      case WM_DISPLAYCHANGE: OutputDebugStringA("WM_DISPLAYCHANGE\n"); break;
+      case WM_DPICHANGED: OutputDebugStringA("WM_DPICHANGED\n"); break;
+      case WM_INPUTLANGCHANGE: OutputDebugStringA("WM_INPUTLANGCHANGE\n"); break;
+      case WM_DEVICECHANGE: OutputDebugStringA("WM_DEVICECHANGE\n"); break;
+      case WM_TIMECHANGE: OutputDebugStringA("WM_TIMECHANGE\n"); break;
 
       case WM_TIMER: {
         SYSTEMTIME time;
         GetLocalTime(&time);
-        app->short_date = format_date(time, app->format.locale, app->format.short_date);
-        app->short_time = format_time(time, app->format.locale, app->format.short_time);
-        app->long_date = format_date(time, app->format.locale, app->format.long_date);
-        app->long_time = format_time(time, app->format.locale, app->format.long_time);
+        app->short_date = utils::format_date(time, app->format.locale, app->format.short_date);
+        app->short_time = utils::format_time(time, app->format.locale, app->format.short_time);
+        app->long_date = utils::format_date(time, app->format.locale, app->format.long_date);
+        app->long_time = utils::format_time(time, app->format.locale, app->format.long_time);
 
         for (HWND hwnd : app->clock_windows) {
           InvalidateRect(hwnd, nullptr, FALSE);
@@ -516,7 +348,7 @@ HWND create_dummy_window(HINSTANCE instance) {
 }
 
 DeviceDependentResources create_device_dependent_resources(HWND window, ID2D1Factory* factory) {
-  const Int2 size = window_client_size(window);
+  const Int2 size = utils::window_client_size(window);
   const uint32_t width = static_cast<uint32_t>(size.x);
   const uint32_t height = static_cast<uint32_t>(size.y);
 
@@ -546,26 +378,26 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
 
   SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
 
-  const std::wstring temp_directory = get_temp_directory() + L"Win11Clock\\";
-  const std::wstring settings_filename = temp_directory + L"settings.dat";
+  const std::wstring temp_directory = utils::get_temp_directory();
+  const std::wstring settings_absolute_path = temp_directory + L"settings.dat";
   SHCreateDirectoryExW(nullptr, temp_directory.c_str(), nullptr);
-  app.settings = load_settings(settings_filename);
+  app.settings = utils::load_settings(settings_absolute_path);
 
   // @TODO: handle no locale found
-  app.format.locale = get_user_default_locale_name();
+  app.format.locale = utils::get_user_default_locale_name();
 
   // @TODO: handle no format found
-  app.format.short_date = get_date_format(app.format.locale, DATE_SHORTDATE);
-  app.format.long_date = get_date_format(app.format.locale, DATE_LONGDATE);
-  app.format.short_time = get_time_format(app.format.locale, TIME_NOSECONDS);
-  app.format.long_time = get_time_format(app.format.locale, 0);
+  app.format.short_date = utils::get_date_format(app.format.locale, DATE_SHORTDATE);
+  app.format.long_date = utils::get_date_format(app.format.locale, DATE_LONGDATE);
+  app.format.short_time = utils::get_time_format(app.format.locale, TIME_NOSECONDS);
+  app.format.long_time = utils::get_time_format(app.format.locale, 0);
 
   SYSTEMTIME time;
   GetLocalTime(&time);
-  app.short_date = format_date(time, app.format.locale, app.format.short_date);
-  app.short_time = format_time(time, app.format.locale, app.format.short_time);
-  app.long_date = format_date(time, app.format.locale, app.format.long_date);
-  app.long_time = format_time(time, app.format.locale, app.format.long_time);
+  app.short_date = utils::format_date(time, app.format.locale, app.format.short_date);
+  app.short_time = utils::format_time(time, app.format.locale, app.format.short_time);
+  app.long_date = utils::format_date(time, app.format.locale, app.format.long_date);
+  app.long_time = utils::format_time(time, app.format.locale, app.format.long_time);
 
   // @NOTE: Dummy window is used to have one window always present
   // even in the case when there are no "clock" windows.
@@ -580,7 +412,7 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
     app.text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
     app.text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-    app.monitors = get_display_monitors();
+    app.monitors = utils::get_display_monitors();
 
     const size_t monitor_count = app.monitors.size();
     for (size_t i = 0; i < monitor_count; ++i) {
@@ -610,10 +442,8 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
       DispatchMessageW(&msg);
     }
 
-
     // @NOTE: windows will do the clean up anyways...
-
-    save_settings(settings_filename, app.settings);
+    utils::save_settings(app.settings, settings_absolute_path);
 
     KillTimer(app.dummy_window, timer);
     UnhookWinEvent(hook);
