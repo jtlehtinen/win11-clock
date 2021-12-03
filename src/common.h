@@ -2,6 +2,7 @@
 
 // @TODO: ugh, windows.h include in a header..
 #include <windows.h>
+#include <stdint.h>
 #include <string>
 #include <vector>
 
@@ -9,23 +10,11 @@ struct Int2 { int x, y; };
 
 struct Float2 { float x, y; };
 
-struct Monitor {
-  HMONITOR handle = nullptr;
-  Int2 position = { };
-  Int2 size = { };
-  Float2 dpi = { };
-
-  bool is_primary() const {
-    // https://devblogs.microsoft.com/oldnewthing/20070809-00/?p=25643
-    return position.x == 0 && position.y == 0;
-  }
-};
-
 enum Position : uint8_t {
-  TopRight = 1,
+  BottomLeft = 0,
+  BottomRight = 1,
   TopLeft = 2,
-  BottomRight = 4,
-  BottomLeft = 8,
+  TopRight = 3,
 };
 
 inline bool is_left(Position position) { return (position == Position::BottomLeft) || (position == Position::TopLeft); }
@@ -36,10 +25,29 @@ struct Settings {
   bool on_primary_display = false;
   bool long_date = false;
   bool long_time = false;
+
+  bool load(const std::wstring& filename);
+  bool save(const std::wstring& filename);
+
+  bool operator ==(Settings other) const { return memcmp(this, &other, sizeof(Settings)) == 0; }
+  bool operator !=(Settings other) const { return !(*this == other); }
+};
+
+static_assert(sizeof(Settings) == 4);
+
+struct Monitor {
+  HMONITOR handle = nullptr;
+  Int2 position = { };
+  Int2 size = { };
+  Float2 dpi = {1.0f, 1.0f};
+
+  bool is_primary() const {
+    // https://devblogs.microsoft.com/oldnewthing/20070809-00/?p=25643
+    return (position.x == 0) && (position.y == 0);
+  }
 };
 
 namespace utils {
-
   std::wstring get_temp_directory();
 
   std::wstring get_user_default_locale_name();
@@ -48,12 +56,10 @@ namespace utils {
   std::wstring format_date(SYSTEMTIME time, const std::wstring& locale, const std::wstring& date_format);
   std::wstring format_time(SYSTEMTIME time, const std::wstring& locale, const std::wstring& time_format);
 
-  Int2 window_client_size(HWND window);
-
   Float2 get_dpi_scale(HMONITOR monitor);
   std::vector<Monitor> get_display_monitors();
 
-  bool save_settings(Settings settings, const std::wstring& filename);
-  Settings load_settings(const std::wstring& filename);
-
+  Int2 window_client_size(HWND window);
+  Int2 compute_clock_window_size(Float2 dpi);
+  Int2 compute_clock_window_position(Int2 window_size, Int2 monitor_position, Int2 monitor_size, Position position);
 }

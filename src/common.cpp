@@ -1,9 +1,30 @@
-#include "utils.h"
+#include "common.h"
 #include <stdio.h>
 #include <shellscalingapi.h>
 
-namespace utils {
+bool Settings::load(const std::wstring& filename) {
+  FILE* f = _wfopen(filename.c_str(), L"wb");
+  if (!f) return false;
 
+  Settings settings;
+  bool ok = (fwrite(&settings, sizeof(settings), 1, f) == 0);
+  if (ok) *this = settings;
+
+  fclose(f);
+  return ok;
+}
+
+bool Settings::save(const std::wstring& filename) {
+  FILE* f = _wfopen(filename.c_str(), L"rb");
+  if (!f) return false;
+
+  bool ok = (fread(this, sizeof(*this), 1, f) == 1);
+  fclose(f);
+
+  return ok;
+}
+
+namespace utils {
   std::wstring get_temp_directory() {
     wchar_t buffer[MAX_PATH + 1];
     if (GetTempPathW(MAX_PATH + 1, buffer) == 0) return L"";
@@ -110,38 +131,22 @@ namespace utils {
     return result;
   }
 
-  bool save_settings(Settings settings, const std::wstring& filename) {
-    FILE* f = _wfopen(filename.c_str(), L"wb");
-    if (!f) return false;
-
-    uint8_t state[4] = {
-      static_cast<uint8_t>(settings.position),
-      static_cast<uint8_t>(settings.on_primary_display),
-      static_cast<uint8_t>(settings.long_date),
-      static_cast<uint8_t>(settings.long_time)
-    };
-
-    bool ok = (fwrite(state, sizeof(state), 1, f) == 1);
-    fclose(f);
-    return ok;
+  Int2 compute_clock_window_size(Float2 dpi) {
+    constexpr float base_width = 200.0f;
+    constexpr float base_height = 48.0f;
+    return {static_cast<int>(base_width * dpi.x + 0.5f), static_cast<int>(base_height * dpi.y + 0.5f)};
   }
 
-  Settings load_settings(const std::wstring& filename) {
-    FILE* f = _wfopen(filename.c_str(), L"rb");
-    if (!f) return Settings{};
+  Int2 compute_clock_window_position(Int2 window_size, Int2 monitor_position, Int2 monitor_size, Position position) {
+    if (position == Position::BottomLeft)
+      return {monitor_position.x, monitor_position.y + monitor_size.y - window_size.y};
 
-    uint8_t state[4] = { };
-    bool ok = (fread(state, sizeof(state), 1, f) == 1);
-    fclose(f);
+    if (position == Position::BottomRight)
+      return {monitor_position.x + monitor_size.x - window_size.x, monitor_position.y + monitor_size.y - window_size.y};
 
-    if (!ok) return Settings{ };
+    if (position == Position::TopLeft)
+      return {monitor_position.x, monitor_position.y};
 
-    return Settings{
-      .position = static_cast<Position>(state[0]),
-      .on_primary_display = static_cast<bool>(state[1]),
-      .long_date = static_cast<bool>(state[2]),
-      .long_time = static_cast<bool>(state[3]),
-    };
+    return {monitor_position.x + monitor_size.x - window_size.x, monitor_position.y};
   }
-
 }

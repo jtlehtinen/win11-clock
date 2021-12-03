@@ -11,7 +11,7 @@
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 
-#include "utils.h"
+#include "common.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -19,10 +19,6 @@
 #include <shlobj.h>
 #include <dwrite.h>
 #include <d2d1.h>
-
-#include <stdint.h>
-#include <string>
-#include <vector>
 
 constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
 
@@ -86,25 +82,6 @@ uint32_t find_primary_monitor_index(const App& app) {
   return UINT32_MAX;
 }
 
-Int2 compute_clock_window_size(Float2 dpi) {
-  constexpr float base_width = 200.0f;
-  constexpr float base_height = 48.0f;
-  return {static_cast<int>(base_width * dpi.x + 0.5f), static_cast<int>(base_height * dpi.y + 0.5f)};
-}
-
-Int2 compute_clock_window_position(Int2 window_size, Int2 monitor_position, Int2 monitor_size, Position position) {
-  if (position == Position::BottomLeft)
-    return {monitor_position.x, monitor_position.y + monitor_size.y - window_size.y};
-
-  if (position == Position::BottomRight)
-    return {monitor_position.x + monitor_size.x - window_size.x, monitor_position.y + monitor_size.y - window_size.y};
-
-  if (position == Position::TopLeft)
-    return {monitor_position.x, monitor_position.y};
-
-  return {monitor_position.x + monitor_size.x - window_size.x, monitor_position.y};
-}
-
 void settings_changed(App* app) {
   const size_t count = app->clock_windows.size();
 
@@ -113,7 +90,7 @@ void settings_changed(App* app) {
     const Monitor& monitor = app->monitors[i];
 
     const Int2 size = utils::window_client_size(window);
-    const Int2 position = compute_clock_window_position(size, monitor.position, monitor.size, app->settings.position);
+    const Int2 position = utils::compute_clock_window_position(size, monitor.position, monitor.size, app->settings.position);
     SetWindowPos(window, HWND_TOPMOST, position.x, position.y, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
   }
 
@@ -381,7 +358,7 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   const std::wstring temp_directory = utils::get_temp_directory();
   const std::wstring settings_absolute_path = temp_directory + L"settings.dat";
   SHCreateDirectoryExW(nullptr, temp_directory.c_str(), nullptr);
-  app.settings = utils::load_settings(settings_absolute_path);
+  app.settings.load(settings_absolute_path);
 
   // @TODO: handle no locale found
   app.format.locale = utils::get_user_default_locale_name();
@@ -420,8 +397,8 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
       HWND window = create_clock_window(instance);
       SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
 
-      const Int2 size = compute_clock_window_size(monitor.dpi);
-      const Int2 position = compute_clock_window_position(size, monitor.position, monitor.size, app.settings.position);
+      const Int2 size = utils::compute_clock_window_size(monitor.dpi);
+      const Int2 position = utils::compute_clock_window_position(size, monitor.position, monitor.size, app.settings.position);
 
       SetWindowPos(window, HWND_TOPMOST, position.x, position.y, size.x, size.y, SWP_NOACTIVATE);
       ShowWindow(window, SW_SHOW);
@@ -443,7 +420,7 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
     }
 
     // @NOTE: windows will do the clean up anyways...
-    utils::save_settings(app.settings, settings_absolute_path);
+    app.settings.save(settings_absolute_path);
 
     KillTimer(app.dummy_window, timer);
     UnhookWinEvent(hook);
