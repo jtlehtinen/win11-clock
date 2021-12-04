@@ -3,11 +3,11 @@
 #include <shellscalingapi.h>
 
 bool Settings::load(const std::wstring& filename) {
-  FILE* f = _wfopen(filename.c_str(), L"wb");
+  FILE* f = _wfopen(filename.c_str(), L"rb");
   if (!f) return false;
 
   Settings settings;
-  bool ok = (fwrite(&settings, sizeof(settings), 1, f) == 0);
+  bool ok = (fread(&settings, sizeof(settings), 1, f) == 1);
   if (ok) *this = settings;
 
   fclose(f);
@@ -15,12 +15,12 @@ bool Settings::load(const std::wstring& filename) {
 }
 
 bool Settings::save(const std::wstring& filename) {
-  FILE* f = _wfopen(filename.c_str(), L"rb");
+  FILE* f = _wfopen(filename.c_str(), L"wb");
   if (!f) return false;
 
-  bool ok = (fread(this, sizeof(*this), 1, f) == 1);
-  fclose(f);
+  bool ok = (fwrite(this, sizeof(*this), 1, f) == 1);
 
+  fclose(f);
   return ok;
 }
 
@@ -132,19 +132,19 @@ namespace utils {
   }
 
   Int2 compute_clock_window_size(Float2 dpi) {
-    constexpr float base_width = 200.0f;
+    constexpr float base_width = 205.0f;
     constexpr float base_height = 48.0f;
     return {static_cast<int>(base_width * dpi.x + 0.5f), static_cast<int>(base_height * dpi.y + 0.5f)};
   }
 
-  Int2 compute_clock_window_position(Int2 window_size, Int2 monitor_position, Int2 monitor_size, Position position) {
-    if (position == Position::BottomLeft)
+  Int2 compute_clock_window_position(Int2 window_size, Int2 monitor_position, Int2 monitor_size, Corner corner) {
+    if (corner == Corner::BottomLeft)
       return {monitor_position.x, monitor_position.y + monitor_size.y - window_size.y};
 
-    if (position == Position::BottomRight)
+    if (corner == Corner::BottomRight)
       return {monitor_position.x + monitor_size.x - window_size.x, monitor_position.y + monitor_size.y - window_size.y};
 
-    if (position == Position::TopLeft)
+    if (corner == Corner::TopLeft)
       return {monitor_position.x, monitor_position.y};
 
     return {monitor_position.x + monitor_size.x - window_size.x, monitor_position.y};

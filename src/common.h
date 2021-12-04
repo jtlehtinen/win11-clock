@@ -10,18 +10,18 @@ struct Int2 { int x, y; };
 
 struct Float2 { float x, y; };
 
-enum Position : uint8_t {
+enum Corner : uint8_t {
   BottomLeft = 0,
   BottomRight = 1,
   TopLeft = 2,
   TopRight = 3,
 };
 
-inline bool is_left(Position position) { return (position == Position::BottomLeft) || (position == Position::TopLeft); }
-inline bool is_right(Position position) { return !is_left(position); }
+inline bool is_left(Corner corner) { return (corner == Corner::BottomLeft) || (corner == Corner::TopLeft); }
+inline bool is_right(Corner corner) { return !is_left(corner); }
 
 struct Settings {
-  Position position = Position::BottomRight;
+  Corner corner = Corner::BottomRight;
   bool on_primary_display = false;
   bool long_date = false;
   bool long_time = false;
@@ -61,5 +61,5 @@ namespace utils {
 
   Int2 window_client_size(HWND window);
   Int2 compute_clock_window_size(Float2 dpi);
-  Int2 compute_clock_window_position(Int2 window_size, Int2 monitor_position, Int2 monitor_size, Position position);
+  Int2 compute_clock_window_position(Int2 window_size, Int2 monitor_position, Int2 monitor_size, Corner corner);
 }

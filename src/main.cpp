@@ -3,22 +3,24 @@
 // @TODO: handle WM_DISPLAYCHANGE, WM_DPICHANGED, WM_INPUTLANGCHANGE, WM_DEVICECHANGE, WM_TIMECHANGE?
 // @TODO: hide when fullscreen window?
 // @TODO: timer should be one minute or one second depending on the displayed time format
+// @TODO: create a text layout for each dpi
 
+#pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shcore.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "user32.lib")
-#pragma comment(lib, "d2d1.lib")
-#pragma comment(lib, "dwrite.lib")
 
 #include "common.h"
 
 #include <windows.h>
 #include <shellapi.h>
-#include <shellscalingapi.h>
 #include <shlobj.h>
 #include <dwrite.h>
 #include <d2d1.h>
+
+static_assert(sizeof(int) == sizeof(LONG));
 
 constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
 
@@ -30,46 +32,92 @@ struct DateTimeFormat {
   std::wstring long_time;
 };
 
-struct DeviceDependentResources {
-  ID2D1HwndRenderTarget* rt = nullptr;
-  ID2D1SolidColorBrush* white_brush = nullptr;
-  ID2D1SolidColorBrush* red_brush = nullptr;
-  ID2D1SolidColorBrush* green_brush = nullptr;
-};
-
-struct App {
-  DateTimeFormat format;
-  Settings settings;
+struct DateTime {
   std::wstring short_date;
   std::wstring short_time;
   std::wstring long_date;
   std::wstring long_time;
+};
+
+struct ClockWindow {
+  HWND window = nullptr;
+  ID2D1DCRenderTarget* rt = nullptr;
+  ID2D1SolidColorBrush* brush = nullptr;
+  HDC memory_dc = nullptr;
+  HBITMAP bitmap = nullptr;
+};
+
+struct App {
+  DateTimeFormat format;
+  DateTime datetime;
+  Settings settings;
 
   std::vector<Monitor> monitors;
-
-  std::vector<HWND> clock_windows;
-  std::vector<DeviceDependentResources> device_dependent_resources;
+  std::vector<ClockWindow> windows;
   HWND dummy_window = nullptr;
 
-  ID2D1Factory* d2d_factory = nullptr;
-  IDWriteFactory* dwrite_factory = nullptr;
+  ID2D1Factory* d2d = nullptr;
+  IDWriteFactory* dwrite = nullptr;
   IDWriteTextFormat* text_format = nullptr;
+
+  bool recreate_clock_windows = false;
 };
 
 uint32_t find_window_index(const App& app, HWND window) {
-  const size_t count = app.clock_windows.size();
-  for (size_t i = 0; i < count; ++i) {
-    if (window == app.clock_windows[i]) return static_cast<uint32_t>(i);
+  for (size_t i = 0; i < app.windows.size(); ++i) {
+    if (app.windows[i].window == window) return static_cast<uint32_t>(i);
   }
-
   return UINT32_MAX;
 }
 
-DWRITE_TEXT_ALIGNMENT text_alignment_from_clock_position(Position position) {
-  if (position == Position::BottomLeft) return DWRITE_TEXT_ALIGNMENT_LEADING;
-  if (position == Position::BottomRight) return DWRITE_TEXT_ALIGNMENT_TRAILING;
-  if (position == Position::TopLeft) return DWRITE_TEXT_ALIGNMENT_LEADING;
-  if (position == Position::TopRight) return DWRITE_TEXT_ALIGNMENT_TRAILING;
+ClockWindow create_clock_window(HINSTANCE instance, const Monitor& monitor, Corner corner, ID2D1Factory* d2d, App* app) {
+  constexpr DWORD window_style = WS_POPUP;
+  constexpr DWORD extended_window_style = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT;
+  HWND window = CreateWindowExW(extended_window_style, L"clock-class", L"", window_style, 0, 0, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, instance, nullptr);
+  SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+  ShowWindow(window, SW_SHOW);
+
+  const Int2 size = utils::compute_clock_window_size(monitor.dpi);
+  const Int2 position = utils::compute_clock_window_position(size, monitor.position, monitor.size, corner);
+  SetWindowPos(window, HWND_TOPMOST, position.x, position.y, size.x, size.y, SWP_NOACTIVATE);
+
+  HDC window_dc = GetDC(window);
+  HDC memory_dc = CreateCompatibleDC(window_dc);
+  HBITMAP bitmap = CreateCompatibleBitmap(window_dc, size.x, size.y);
+  SelectObject(memory_dc, bitmap);
+  ReleaseDC(window, window_dc);
+
+  D2D1_RENDER_TARGET_PROPERTIES props = { };
+  props.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
+  props.pixelFormat = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+  props.dpiX = 96.0f;
+  props.dpiY = 96.0f;
+  props.usage = D2D1_RENDER_TARGET_USAGE_NONE;
+  props.minLevel = D2D1_FEATURE_LEVEL_DEFAULT;
+
+  ID2D1DCRenderTarget* rt = nullptr;
+  d2d->CreateDCRenderTarget(&props, &rt);
+
+  ID2D1SolidColorBrush* brush = nullptr;
+  rt->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &brush);
+
+  return ClockWindow{.window = window, .rt = rt, .brush = brush, .memory_dc = memory_dc, .bitmap = bitmap};
+};
+
+void destroy_clock_window(ClockWindow& clock) {
+  if (clock.brush) clock.brush->Release();
+  if (clock.rt) clock.rt->Release();
+  if (clock.memory_dc) DeleteDC(clock.memory_dc);
+  if (clock.bitmap) DeleteObject(clock.bitmap);
+  if (clock.window) DestroyWindow(clock.window);
+  clock = { };
+}
+
+DWRITE_TEXT_ALIGNMENT get_text_alignment_for(Corner corner) {
+  if (corner == Corner::BottomLeft) return DWRITE_TEXT_ALIGNMENT_LEADING;
+  if (corner == Corner::BottomRight) return DWRITE_TEXT_ALIGNMENT_TRAILING;
+  if (corner == Corner::TopLeft) return DWRITE_TEXT_ALIGNMENT_LEADING;
+  if (corner == Corner::TopRight) return DWRITE_TEXT_ALIGNMENT_TRAILING;
 
   return DWRITE_TEXT_ALIGNMENT_LEADING;
 }
@@ -82,82 +130,103 @@ uint32_t find_primary_monitor_index(const App& app) {
   return UINT32_MAX;
 }
 
-void settings_changed(App* app) {
-  const size_t count = app->clock_windows.size();
-
-  for (size_t i = 0; i < count; ++i) {
-    HWND window = app->clock_windows[i];
-    const Monitor& monitor = app->monitors[i];
-
-    const Int2 size = utils::window_client_size(window);
-    const Int2 position = utils::compute_clock_window_position(size, monitor.position, monitor.size, app->settings.position);
-    SetWindowPos(window, HWND_TOPMOST, position.x, position.y, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
+void request_repaint_for_clock_windows(const App& app) {
+  for (const ClockWindow& clock : app.windows) {
+    InvalidateRect(clock.window, nullptr, FALSE);
   }
+}
 
+void update_datetime_format(DateTimeFormat& format) {
+  format.locale = utils::get_user_default_locale_name();
+  format.short_date = utils::get_date_format(format.locale, DATE_SHORTDATE);
+  format.long_date = utils::get_date_format(format.locale, DATE_LONGDATE);
+  format.short_time = utils::get_time_format(format.locale, TIME_NOSECONDS);
+  format.long_time = utils::get_time_format(format.locale, 0);
+}
+
+void update_datetime(DateTime& datetime, const DateTimeFormat& format) {
   SYSTEMTIME time;
   GetLocalTime(&time);
-  app->short_date = utils::format_date(time, app->format.locale, app->format.short_date);
-  app->short_time = utils::format_time(time, app->format.locale, app->format.short_time);
-  app->long_date = utils::format_date(time, app->format.locale, app->format.long_date);
-  app->long_time = utils::format_time(time, app->format.locale, app->format.long_time);
+  datetime.short_date = utils::format_date(time, format.locale, format.short_date);
+  datetime.long_date = utils::format_date(time, format.locale, format.long_date);
+  datetime.short_time = utils::format_time(time, format.locale, format.short_time);
+  datetime.long_time = utils::format_time(time, format.locale, format.long_time);
+}
 
-  for (HWND window : app->clock_windows) {
-    InvalidateRect(window, nullptr, FALSE);
+void change_settings(App* app, Settings new_settings) {
+  Settings old_settings = app->settings;
+  app->settings = new_settings;
+
+  if (old_settings.corner != new_settings.corner) {
+    app->text_format->SetTextAlignment(get_text_alignment_for(app->settings.corner));
+
+    const size_t count = app->windows.size();
+    for (size_t i = 0; i < count; ++i) {
+      const Monitor& monitor = app->monitors[i];
+      const ClockWindow& clock = app->windows[i];
+
+      const Int2 size = utils::window_client_size(clock.window);
+      const Int2 position = utils::compute_clock_window_position(size, monitor.position, monitor.size, app->settings.corner);
+      SetWindowPos(clock.window, HWND_TOPMOST, position.x, position.y, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
+    }
   }
+
+  request_repaint_for_clock_windows(*app);
 }
 
 LRESULT CALLBACK window_callback(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
   App* app = reinterpret_cast<App*>(GetWindowLongPtrW(window, GWLP_USERDATA));
 
   if (app) {
-    // @TODO: too much?
-    SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); // @TODO: too much?
 
     switch (message) {
       case WM_PAINT: {
-        const uint32_t idx = find_window_index(*app, window);
-        if (idx != UINT32_MAX) {
-          ID2D1HwndRenderTarget* rt = app->device_dependent_resources[idx].rt;
-          ID2D1SolidColorBrush* white_brush = app->device_dependent_resources[idx].white_brush;
+        const uint32_t window_index = find_window_index(*app, window);
+        if (window_index != UINT32_MAX) {
+          ClockWindow& clock = app->windows[window_index];
+          ID2D1DCRenderTarget* rt = clock.rt;
 
-          auto alignment = text_alignment_from_clock_position(app->settings.position);
-          if (alignment != app->text_format->GetTextAlignment()) {
-            app->text_format->SetTextAlignment(alignment);
-          }
-
+          const Int2 size = utils::window_client_size(window);
+          RECT bind_rect = {0, 0, size.x, size.y};
+          rt->BindDC(clock.memory_dc, &bind_rect);
           rt->BeginDraw();
-          rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+          rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
           rt->SetTransform(D2D1::IdentityMatrix());
           rt->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
-          const Int2 size = utils::window_client_size(window);
-          const Float2 dpi = app->monitors[idx].dpi;
-          const Float2 sizef = { float(size.x) / dpi.x, float(size.y) / dpi.y };
+          const float width = static_cast<float>(size.x);
+          const float height = static_cast<float>(size.y);
 
           #ifdef CLOCK_DEBUG
-          ID2D1SolidColorBrush* red_brush = app->device_dependent_resources[idx].red_brush;
-          ID2D1SolidColorBrush* green_brush = app->device_dependent_resources[idx].green_brush;
-          rt->DrawLine(D2D_POINT_2F{ 0.0f, 0.0f }, D2D_POINT_2F{ sizef.x, 0.0f }, red_brush);
-          rt->DrawLine(D2D_POINT_2F{ 0.0f, sizef.y }, D2D_POINT_2F{ sizef.x, sizef.y }, green_brush);
-          rt->DrawLine(D2D_POINT_2F{ 0.0f, 0.0f }, D2D_POINT_2F{ 0.0f, sizef.y }, red_brush);
-          rt->DrawLine(D2D_POINT_2F{ sizef.x, 0.0f }, D2D_POINT_2F{ sizef.x, sizef.y }, green_brush);
+          clock.brush->SetColor(D2D1_COLOR_F{1.0f, 0.0f, 0.0f, 1.0f});
+          rt->DrawLine(D2D_POINT_2F{0.0f, 0.0f}, D2D_POINT_2F{width, 0.0f}, clock.brush);
+          rt->DrawLine(D2D_POINT_2F{0.0f, height}, D2D_POINT_2F{width, height}, clock.brush);
+          rt->DrawLine(D2D_POINT_2F{0.0f, 0.0f}, D2D_POINT_2F{0.0f, height}, clock.brush);
+          rt->DrawLine(D2D_POINT_2F{width, 0.0f}, D2D_POINT_2F{width, height}, clock.brush);
           #endif
 
-          const Position clock_position = app->settings.position;
-          const float pad_left = is_left(clock_position) ? 28.0f / dpi.x : 0.0f;
-          const float pad_right = is_right(clock_position) ? 28.0f / dpi.x : 0.0f;
+          const bool left = is_left(app->settings.corner);
+          const float pad_left = left ? 15.0f : 0.0f;
+          const float pad_right = !left ? 15.0f : 0.0f;
+          D2D1_RECT_F rect = D2D1::RectF(pad_left, 0.0f, width - pad_right, height);
 
-          D2D1_RECT_F layout_rect = D2D1::RectF(pad_left, 0.0f, sizef.x - pad_right, sizef.y);
+          const std::wstring& time = app->settings.long_time ? app->datetime.long_time : app->datetime.short_time;
+          const std::wstring& date = app->settings.long_date ? app->datetime.long_date : app->datetime.short_date;
+          const std::wstring datetime = time + L"\n" + date; // @TODO: wasteful
 
-          const std::wstring& time = app->settings.long_time ? app->long_time : app->short_time;
-          const std::wstring& date = app->settings.long_date ? app->long_date : app->short_date;
-          const std::wstring& datetime = time + L"\n" + date;
-          rt->DrawText(datetime.c_str(), static_cast<UINT32>(datetime.length()), app->text_format, layout_rect, white_brush);
-
+          clock.brush->SetColor(D2D1_COLOR_F{1.0f, 1.0f, 1.0f, 1.0f});
+          rt->DrawText(datetime.c_str(), static_cast<UINT32>(datetime.length()), app->text_format, rect, clock.brush);
           rt->EndDraw();
 
-          ValidateRect(window, nullptr);
+          HDC desktop_dc = GetDC(nullptr);
+          POINT source_point = { };
+          SIZE windowSize = {size.x, size.y};
+          BLENDFUNCTION blend = {.BlendOp = AC_SRC_OVER, .SourceConstantAlpha = 255, .AlphaFormat = AC_SRC_ALPHA};
+          UpdateLayeredWindow(window, desktop_dc, nullptr, &windowSize, clock.memory_dc, &source_point, 0, &blend, ULW_ALPHA);
+          ReleaseDC(nullptr, desktop_dc);
         }
+        ValidateRect(window, nullptr);
         return 0;
       }
     }
@@ -166,32 +235,11 @@ LRESULT CALLBACK window_callback(HWND window, UINT message, WPARAM wparam, LPARA
   return DefWindowProcW(window, message, wparam, lparam);
 }
 
-HWND create_clock_window(HINSTANCE instance) {
-  static bool registered = false;
-  if (!registered) {
-    registered = true;
-
-    WNDCLASSW wc = { };
-    wc.lpfnWndProc = window_callback;
-    wc.hInstance = instance;
-    wc.lpszClassName = L"win11-clock-classname";
-    RegisterClassW(&wc);
-  }
-
-  constexpr DWORD window_style = WS_POPUP;
-  constexpr DWORD extended_window_style = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED;
-
-  HWND window = CreateWindowExW(extended_window_style, L"win11-clock-classname", L"", window_style, 0, 0, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, instance, nullptr);
-  SetLayeredWindowAttributes(window, RGB(0, 0, 0), 0, LWA_COLORKEY);
-
-  return window;
-}
-
 bool add_notification_area_icon(HWND window) {
   NOTIFYICONDATAW data = { };
   data.cbSize = sizeof(data);
   data.hWnd = window;
-  data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+  data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
   data.uCallbackMessage = WM_CLOCK_NOTIFY_COMMAND;
   data.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
   wcscpy_s(data.szTip, std::size(data.szTip), L"win11-clock");
@@ -200,9 +248,7 @@ bool add_notification_area_icon(HWND window) {
 }
 
 void remove_notification_area_icon(HWND window) {
-  NOTIFYICONDATAW data = { };
-  data.cbSize = sizeof(data);
-  data.hWnd = window;
+  NOTIFYICONDATAW data = {.cbSize = sizeof(NOTIFYICONDATAW), .hWnd = window};
   Shell_NotifyIconW(NIM_DELETE, &data);
 }
 
@@ -240,24 +286,24 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           HMENU menu = CreatePopupMenu();
 
           HMENU position_menu = CreatePopupMenu();
-          AppendMenuW(position_menu, checked(app->settings.position == Position::BottomLeft), kCmdPositionBottomLeft, L"Bottom Left");
-          AppendMenuW(position_menu, checked(app->settings.position == Position::BottomRight), kCmdPositionBottomRight, L"Bottom Right");
-          AppendMenuW(position_menu, checked(app->settings.position == Position::TopLeft), kCmdPositionTopLeft, L"Top Left");
-          AppendMenuW(position_menu, checked(app->settings.position == Position::TopRight), kCmdPositionTopRight, L"Top Right");
+          AppendMenuW(position_menu, checked(app->settings.corner == Corner::BottomLeft), kCmdPositionBottomLeft, L"Bottom Left");
+          AppendMenuW(position_menu, checked(app->settings.corner == Corner::BottomRight), kCmdPositionBottomRight, L"Bottom Right");
+          AppendMenuW(position_menu, checked(app->settings.corner == Corner::TopLeft), kCmdPositionTopLeft, L"Top Left");
+          AppendMenuW(position_menu, checked(app->settings.corner == Corner::TopRight), kCmdPositionTopRight, L"Top Right");
           AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(position_menu), L"Position");
 
           HMENU date_menu = CreatePopupMenu();
-          AppendMenuW(date_menu, checked(!app->settings.long_date), kCmdFormatShortDate, app->short_date.c_str());
-          AppendMenuW(date_menu, checked(app->settings.long_date), kCmdFormatLongDate, app->long_date.c_str());
+          AppendMenuW(date_menu, checked(!app->settings.long_date), kCmdFormatShortDate, app->datetime.short_date.c_str());
+          AppendMenuW(date_menu, checked(app->settings.long_date), kCmdFormatLongDate, app->datetime.long_date.c_str());
           AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(date_menu), L"Date Format");
 
           HMENU time_menu = CreatePopupMenu();
-          AppendMenuW(time_menu, checked(!app->settings.long_time), kCmdFormatShortTime, app->short_time.c_str());
-          AppendMenuW(time_menu, checked(app->settings.long_time), kCmdFormatLongTime, app->long_time.c_str());
+          AppendMenuW(time_menu, checked(!app->settings.long_time), kCmdFormatShortTime, app->datetime.short_time.c_str());
+          AppendMenuW(time_menu, checked(app->settings.long_time), kCmdFormatLongTime, app->datetime.long_time.c_str());
           AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(time_menu), L"Time Format");
 
           AppendMenuW(menu, checked(app->settings.on_primary_display), kCmdPrimaryDisplay, L"On Primary Display");
-          AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+          AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
           AppendMenuW(menu, MF_STRING, kCmdQuit, L"Exit");
 
           SetForegroundWindow(window);
@@ -271,41 +317,48 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           DestroyMenu(time_menu);
           DestroyMenu(date_menu);
 
+          Settings settings = app->settings;
           switch (cmd) {
             case kCmdQuit: DestroyWindow(window); break;
-            case kCmdPrimaryDisplay: app->settings.on_primary_display = !app->settings.on_primary_display; break;
-            case kCmdPositionBottomLeft: app->settings.position = Position::BottomLeft; break;
-            case kCmdPositionBottomRight: app->settings.position = Position::BottomRight; break;
-            case kCmdPositionTopLeft: app->settings.position = Position::TopLeft; break;
-            case kCmdPositionTopRight: app->settings.position = Position::TopRight; break;
-            case kCmdFormatLongDate:  app->settings.long_date = true; break;
-            case kCmdFormatShortDate: app->settings.long_date = false; break;
-            case kCmdFormatLongTime: app->settings.long_time = true; break;
-            case kCmdFormatShortTime: app->settings.long_time = false; break;
+            case kCmdPrimaryDisplay: settings.on_primary_display = !settings.on_primary_display; break;
+            case kCmdPositionBottomLeft: settings.corner = Corner::BottomLeft; break;
+            case kCmdPositionBottomRight: settings.corner = Corner::BottomRight; break;
+            case kCmdPositionTopLeft: settings.corner = Corner::TopLeft; break;
+            case kCmdPositionTopRight: settings.corner = Corner::TopRight; break;
+            case kCmdFormatLongDate: settings.long_date = true; break;
+            case kCmdFormatShortDate: settings.long_date = false; break;
+            case kCmdFormatLongTime: settings.long_time = true; break;
+            case kCmdFormatShortTime: settings.long_time = false; break;
           }
-
-          settings_changed(app); // @TODO: unnecessary
+          if (settings != app->settings) change_settings(app, settings);
         }
         return 0;
       }
 
-      case WM_DISPLAYCHANGE: OutputDebugStringA("WM_DISPLAYCHANGE\n"); break;
-      case WM_DPICHANGED: OutputDebugStringA("WM_DPICHANGED\n"); break;
+      case WM_DEVICECHANGE: OutputDebugStringA("WM_DEVICECHANGE\n"); app->recreate_clock_windows = true; break;
+      case WM_DISPLAYCHANGE: OutputDebugStringA("WM_DISPLAYCHANGE\n"); app->recreate_clock_windows = true; break;
+      case WM_DPICHANGED: OutputDebugStringA("WM_DPICHANGED\n"); app->recreate_clock_windows = true; break;
       case WM_INPUTLANGCHANGE: OutputDebugStringA("WM_INPUTLANGCHANGE\n"); break;
-      case WM_DEVICECHANGE: OutputDebugStringA("WM_DEVICECHANGE\n"); break;
       case WM_TIMECHANGE: OutputDebugStringA("WM_TIMECHANGE\n"); break;
 
       case WM_TIMER: {
-        SYSTEMTIME time;
-        GetLocalTime(&time);
-        app->short_date = utils::format_date(time, app->format.locale, app->format.short_date);
-        app->short_time = utils::format_time(time, app->format.locale, app->format.short_time);
-        app->long_date = utils::format_date(time, app->format.locale, app->format.long_date);
-        app->long_time = utils::format_time(time, app->format.locale, app->format.long_time);
+        update_datetime(app->datetime, app->format);
+        if (app->recreate_clock_windows) {
+          app->recreate_clock_windows = false;
 
-        for (HWND hwnd : app->clock_windows) {
-          InvalidateRect(hwnd, nullptr, FALSE);
+          app->monitors = utils::get_display_monitors();
+
+          for (ClockWindow& clock : app->windows) {
+            destroy_clock_window(clock);
+          }
+          app->windows.clear();
+
+          HINSTANCE instance = GetModuleHandleW(nullptr);
+          for (const Monitor& monitor : app->monitors) {
+            app->windows.push_back(create_clock_window(instance, monitor, app->settings.corner, app->d2d, app));
+          }
         }
+        request_repaint_for_clock_windows(*app);
         return 0;
       }
     }
@@ -314,103 +367,52 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
   return DefWindowProcW(window, message, wparam, lparam);
 }
 
-HWND create_dummy_window(HINSTANCE instance) {
-  WNDCLASSW wc = { };
-  wc.lpfnWndProc = dummy_window_callback;
-  wc.hInstance = instance;
-  wc.lpszClassName = L"win11-clock-dummy-classname";
-  RegisterClassW(&wc);
-
-  return CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 1, 1, nullptr, nullptr, instance, nullptr);
-}
-
-DeviceDependentResources create_device_dependent_resources(HWND window, ID2D1Factory* factory) {
-  const Int2 size = utils::window_client_size(window);
-  const uint32_t width = static_cast<uint32_t>(size.x);
-  const uint32_t height = static_cast<uint32_t>(size.y);
-
-  DeviceDependentResources result;
-  factory->CreateHwndRenderTarget(D2D1::RenderTargetProperties(), D2D1::HwndRenderTargetProperties(window, D2D1::SizeU(width, height)), &result.rt);
-  result.rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &result.white_brush);
-  result.rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Red), &result.red_brush);
-  result.rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Green), &result.green_brush);
-  return result;
-}
-
-// @TODO:
-App app;
+App app; // @TODO: ugh... global just for the win_event_hook...
 
 void CALLBACK win_event_hook(HWINEVENTHOOK hook, DWORD event, HWND window, LONG id_object, LONG id_child, DWORD id_event_thread, DWORD event_time) {
-  for (HWND hwnd : app.clock_windows) {
-    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+  for (const ClockWindow& clock : app.windows) {
+    SetWindowPos(clock.window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
   }
 }
 
 int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line, int show_command) {
-  // @NOTE: Named mutex is used to prevent multiple instances of
-  // this program running at once.
   const wchar_t* guid = L"6b54d0d4-ac9f-4ce7-b1b4-daa3527c935e";
   HANDLE mutex = CreateMutexW(nullptr, true, guid);
   if (GetLastError() != ERROR_SUCCESS) return 0;
 
-  SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+  SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+  WNDCLASSW dummy_window_class = {.lpfnWndProc = dummy_window_callback, .hInstance = instance, .lpszClassName = L"dummy-class"};
+  RegisterClassW(&dummy_window_class);
+
+  WNDCLASSW clock_window_class = {.lpfnWndProc = window_callback, .hInstance = instance, .lpszClassName = L"clock-class"};
+  RegisterClassW(&clock_window_class);
 
   const std::wstring temp_directory = utils::get_temp_directory();
   const std::wstring settings_absolute_path = temp_directory + L"settings.dat";
   SHCreateDirectoryExW(nullptr, temp_directory.c_str(), nullptr);
   app.settings.load(settings_absolute_path);
 
-  // @TODO: handle no locale found
-  app.format.locale = utils::get_user_default_locale_name();
+  update_datetime_format(app.format);
+  update_datetime(app.datetime, app.format);
 
-  // @TODO: handle no format found
-  app.format.short_date = utils::get_date_format(app.format.locale, DATE_SHORTDATE);
-  app.format.long_date = utils::get_date_format(app.format.locale, DATE_LONGDATE);
-  app.format.short_time = utils::get_time_format(app.format.locale, TIME_NOSECONDS);
-  app.format.long_time = utils::get_time_format(app.format.locale, 0);
-
-  SYSTEMTIME time;
-  GetLocalTime(&time);
-  app.short_date = utils::format_date(time, app.format.locale, app.format.short_date);
-  app.short_time = utils::format_time(time, app.format.locale, app.format.short_time);
-  app.long_date = utils::format_date(time, app.format.locale, app.format.long_date);
-  app.long_time = utils::format_time(time, app.format.locale, app.format.long_time);
-
-  // @NOTE: Dummy window is used to have one window always present
-  // even in the case when there are no "clock" windows.
-  app.dummy_window = create_dummy_window(instance);
+  app.dummy_window = CreateWindowExW(WS_EX_TOOLWINDOW, L"dummy-class", L"", 0, 0, 0, 1, 1, nullptr, nullptr, instance, nullptr);
   if (app.dummy_window) {
     SetWindowLongPtrW(app.dummy_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
 
-    // @TODO: error checking
-    D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &app.d2d_factory);
-    DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&app.dwrite_factory));
-    app.dwrite_factory->CreateTextFormat(L"Segoe UI Variable", nullptr, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, app.format.locale.c_str(), &app.text_format);
-    app.text_format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+    D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &app.d2d);
+    DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&app.dwrite));
+    app.dwrite->CreateTextFormat(L"Segoe UI Variable Display", nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.0f, app.format.locale.c_str(), &app.text_format);
+    app.text_format->SetTextAlignment(get_text_alignment_for(app.settings.corner));
     app.text_format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
     app.monitors = utils::get_display_monitors();
 
-    const size_t monitor_count = app.monitors.size();
-    for (size_t i = 0; i < monitor_count; ++i) {
-      const Monitor& monitor = app.monitors[i];
-      HWND window = create_clock_window(instance);
-      SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
-
-      const Int2 size = utils::compute_clock_window_size(monitor.dpi);
-      const Int2 position = utils::compute_clock_window_position(size, monitor.position, monitor.size, app.settings.position);
-
-      SetWindowPos(window, HWND_TOPMOST, position.x, position.y, size.x, size.y, SWP_NOACTIVATE);
-      ShowWindow(window, SW_SHOW);
-
-      app.clock_windows.push_back(window);
-
-      app.device_dependent_resources.push_back(create_device_dependent_resources(window, app.d2d_factory));
+    for (const Monitor& monitor : app.monitors) {
+      app.windows.push_back(create_clock_window(instance, monitor, app.settings.corner, app.d2d, &app));
     }
 
     const UINT_PTR timer = SetTimer(app.dummy_window, 0, 1000, nullptr);
-
-    // @NOTE: How is the topmost if more than one wants to be?
     HWINEVENTHOOK hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, win_event_hook, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
 
     MSG msg = { };
