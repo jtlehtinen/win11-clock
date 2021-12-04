@@ -119,7 +119,9 @@ ClockWindow create_clock_window(HINSTANCE instance, const Monitor& monitor, Corn
   constexpr DWORD extended_window_style = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT;
   HWND window = CreateWindowExW(extended_window_style, L"clock-class", L"", window_style, 0, 0, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, instance, nullptr);
   SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
-  ShowWindow(window, SW_SHOW);
+
+  const bool show = !monitor.is_primary() || (monitor.is_primary() && app->settings.on_primary_display);
+  if (show) ShowWindow(window, SW_SHOW);
 
   const Int2 size = utils::compute_clock_window_size(monitor.dpi);
   const Int2 position = utils::compute_clock_window_position(size, monitor.position, monitor.size, corner);
@@ -206,6 +208,16 @@ void change_settings(App* app, Settings new_settings) {
       const Int2 size = utils::window_client_size(clock.window);
       const Int2 position = utils::compute_clock_window_position(size, monitor.position, monitor.size, app->settings.corner);
       SetWindowPos(clock.window, HWND_TOPMOST, position.x, position.y, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
+    }
+  }
+
+  if (old_settings.on_primary_display != new_settings.on_primary_display) {
+    const uint32_t idx = find_primary_monitor_index(*app);
+    if (idx != UINT32_MAX) {
+      const Monitor& monitor = app->monitors[idx];
+      const bool show = !monitor.is_primary() || (monitor.is_primary() && app->settings.on_primary_display);
+      const int show_command = show ? SW_SHOW : SW_HIDE;
+      ShowWindow(app->clocks[idx].window, show_command);
     }
   }
 
