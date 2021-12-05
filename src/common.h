@@ -22,9 +22,10 @@ inline bool is_right(Corner corner) { return !is_left(corner); }
 
 struct Settings {
   Corner corner = Corner::BottomRight;
-  bool on_primary_display = false;
+  bool primary_display = false;
   bool long_date = false;
   bool long_time = false;
+  bool hide_fullscreen = false;
 
   bool load(const std::wstring& filename);
   bool save(const std::wstring& filename);
@@ -33,7 +34,7 @@ struct Settings {
   bool operator !=(Settings other) const { return !(*this == other); }
 };
 
-static_assert(sizeof(Settings) == 4);
+static_assert(sizeof(Settings) == 5);
 
 struct Monitor {
   HMONITOR handle = nullptr;
@@ -62,4 +63,7 @@ namespace utils {
   Int2 window_client_size(HWND window);
   Int2 compute_clock_window_size(Float2 dpi);
   Int2 compute_clock_window_position(Int2 window_size, Int2 monitor_position, Int2 monitor_size, Corner corner);
+
+  std::vector<HWND> get_desktop_windows();
+  bool monitor_has_fullscreen_window(HMONITOR monitor, const std::vector<HWND>& windows);
 }

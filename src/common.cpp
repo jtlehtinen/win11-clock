@@ -1,5 +1,6 @@
 #include "common.h"
 #include <stdio.h>
+#include <dwmapi.h>
 #include <shellscalingapi.h>
 
 bool Settings::load(const std::wstring& filename) {
@@ -148,5 +149,31 @@ namespace utils {
       return {monitor_position.x, monitor_position.y};
 
     return {monitor_position.x + monitor_size.x - window_size.x, monitor_position.y};
+  }
+
+  std::vector<HWND> get_desktop_windows() {
+    auto callback = [](HWND window, LPARAM lparam) -> BOOL {
+      reinterpret_cast<std::vector<HWND>*>(lparam)->push_back(window);
+      return TRUE;
+    };
+
+    std::vector<HWND> result;
+    result.reserve(512);
+    EnumDesktopWindows(nullptr, callback, reinterpret_cast<LPARAM>(&result));
+    return result;
+  }
+
+  bool monitor_has_fullscreen_window(HMONITOR monitor, const std::vector<HWND>& windows) {
+    MONITORINFO info = {.cbSize = sizeof(MONITORINFO)};
+    if (GetMonitorInfo(monitor, &info) == 0) return false;
+
+    for (HWND window : windows) {
+      RECT wr;
+      if (DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &wr, static_cast<DWORD>(sizeof(wr))) == S_OK) {
+        if (EqualRect(&info.rcMonitor, &wr)) return true;
+      }
+    }
+
+    return false;
   }
 }

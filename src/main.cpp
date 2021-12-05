@@ -1,12 +1,12 @@
 // @TODO: clean this mess
 // @TODO: error handling
-// @TODO: hide when fullscreen window
 // @TODO: timer 1 second or 1 minute
 // @TODO: slow startup
 // @TODO: settings localization
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shcore.lib")
@@ -139,7 +139,7 @@ ClockWindow create_clock_window(HINSTANCE instance, const Monitor& monitor, Corn
   HWND window = CreateWindowExW(extended_window_style, L"clock-class", L"", window_style, 0, 0, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, instance, nullptr);
   SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
 
-  const bool show = !monitor.is_primary() || (monitor.is_primary() && app->settings.on_primary_display);
+  const bool show = !monitor.is_primary() || (monitor.is_primary() && app->settings.primary_display);
   if (show) ShowWindow(window, SW_SHOW);
 
   const Int2 size = utils::compute_clock_window_size(monitor.dpi);
@@ -227,16 +227,6 @@ void change_settings(App* app, Settings new_settings) {
       const Int2 size = utils::window_client_size(clock.window);
       const Int2 position = utils::compute_clock_window_position(size, monitor.position, monitor.size, app->settings.corner);
       SetWindowPos(clock.window, HWND_TOPMOST, position.x, position.y, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
-    }
-  }
-
-  if (old_settings.on_primary_display != new_settings.on_primary_display) {
-    const uint32_t idx = find_primary_monitor_index(*app);
-    if (idx != UINT32_MAX) {
-      const Monitor& monitor = app->monitors[idx];
-      const bool show = !monitor.is_primary() || (monitor.is_primary() && app->settings.on_primary_display);
-      const int show_command = show ? SW_SHOW : SW_HIDE;
-      ShowWindow(app->clocks[idx].window, show_command);
     }
   }
 
@@ -351,6 +341,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         constexpr UINT kCmdFormatLongDate = 7;
         constexpr UINT kCmdFormatShortTime = 8;
         constexpr UINT kCmdFormatLongTime = 9;
+        constexpr UINT kCmdHideFullscreen = 10;
         constexpr UINT kCmdQuit = 255;
 
         if (lparam == WM_RBUTTONUP) {
@@ -375,7 +366,8 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           AppendMenuW(time_menu, checked(app->settings.long_time), kCmdFormatLongTime, app->datetime.long_time.c_str());
           AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(time_menu), L"Time Format");
 
-          AppendMenuW(menu, checked(app->settings.on_primary_display), kCmdPrimaryDisplay, L"On Primary Display");
+          AppendMenuW(menu, checked(app->settings.hide_fullscreen), kCmdHideFullscreen, L"Hide Fullscreen");
+          AppendMenuW(menu, checked(app->settings.primary_display), kCmdPrimaryDisplay, L"Primary Display");
           AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
           AppendMenuW(menu, MF_STRING, kCmdQuit, L"Exit");
 
@@ -393,7 +385,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           Settings settings = app->settings;
           switch (cmd) {
             case kCmdQuit: DestroyWindow(window); break;
-            case kCmdPrimaryDisplay: settings.on_primary_display = !settings.on_primary_display; break;
+            case kCmdPrimaryDisplay: settings.primary_display = !settings.primary_display; break;
             case kCmdPositionBottomLeft: settings.corner = Corner::BottomLeft; break;
             case kCmdPositionBottomRight: settings.corner = Corner::BottomRight; break;
             case kCmdPositionTopLeft: settings.corner = Corner::TopLeft; break;
@@ -402,6 +394,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
             case kCmdFormatShortDate: settings.long_date = false; break;
             case kCmdFormatLongTime: settings.long_time = true; break;
             case kCmdFormatShortTime: settings.long_time = false; break;
+            case kCmdHideFullscreen: settings.hide_fullscreen = !settings.hide_fullscreen; break;
           }
           if (settings != app->settings) change_settings(app, settings);
         }
@@ -456,6 +449,16 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           create_text_formats(*app);
         }
 
+        // @TODO: this is expensive, the desktop window count is in the hunreds
+        std::vector<HWND> desktop_windows = utils::get_desktop_windows();
+        for (size_t i = 0; i < app->clocks.size(); ++i) {
+          const Monitor& monitor = app->monitors[i];
+          const bool fullscreen = utils::monitor_has_fullscreen_window(monitor.handle, desktop_windows);
+          const bool hide = (monitor.is_primary() && !app->settings.primary_display) || (fullscreen && app->settings.hide_fullscreen);
+          const int show_command = hide ? SW_HIDE : SW_SHOW;
+          ShowWindow(app->clocks[i].window, show_command);
+        }
+
         request_repaint_for_clock_windows(*app);
         return 0;
       }
@@ -498,7 +501,6 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   if (app.dummy_window) {
     SetWindowLongPtrW(app.dummy_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
 
-    // @TODO: way to get this information without reading the registry?
     app.flags.set(kAppFlagUseLightTheme, read_use_light_theme_from_registry());
     app.monitors = utils::get_display_monitors();
 
