@@ -4,7 +4,10 @@
 // @TODO: hide when fullscreen window?
 // @TODO: timer should be one minute or one second depending on the displayed time format
 // @TODO: clock text color based on windows theme?
+// @TODO: handle WM_SYSCOLORCHANGE, WM_SETTINGCHANGE?
+// @TODO: startup feels slow
 
+#pragma comment(lib, "advapi32.lib") // for RegGetValueW
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -13,16 +16,35 @@
 #pragma comment(lib, "user32.lib")
 
 #include "common.h"
-
+#include <bitset>
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
-#include <dwrite.h>
 #include <d2d1.h>
+#include <dwrite.h>
+//#include <uxtheme.h>
 
 static_assert(sizeof(int) == sizeof(LONG));
 
 constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
+
+namespace registry {
+
+  DWORD read_dword(const std::wstring& subkey, const std::wstring& value) {
+    DWORD result = 0;
+    DWORD size = static_cast<DWORD>(sizeof(result));
+    if (RegGetValueW(HKEY_CURRENT_USER, subkey.c_str(), value.c_str(), RRF_RT_DWORD, nullptr, &result, &size) != ERROR_SUCCESS) return 0;
+
+    return result;
+  }
+
+}
+
+enum AppFlags : uint32_t {
+  kAppFlagRecreateRequested = (1 << 0),
+  kAppFlagColorModeChanged = (1 << 1),
+  kAppFlagUseLightTheme = (1 << 2),
+};
 
 struct DateTimeFormat {
   std::wstring locale;
@@ -65,8 +87,12 @@ struct App {
   IDWriteFactory* dwrite = nullptr;
   std::vector<TextFormat> text_formats;
 
-  bool recreate_clock_windows = false;
+  std::bitset<8> flags; // see AppFlags
 };
+
+bool read_use_light_theme_from_registry() {
+  return registry::read_dword(L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"SystemUsesLightTheme") == 1;
+}
 
 uint32_t find_clock_index(const App& app, HWND window) {
   for (size_t i = 0; i < app.clocks.size(); ++i) {
@@ -267,7 +293,9 @@ LRESULT CALLBACK window_callback(HWND window, UINT message, WPARAM wparam, LPARA
           const std::wstring datetime = time + L"\n" + date; // @TODO: wasteful
 
           TextFormat text_format = find_text_format(*app, dpi);
-          clock.brush->SetColor(D2D1_COLOR_F{1.0f, 1.0f, 1.0f, 1.0f});
+
+          D2D1_COLOR_F text_color = app->flags.test(kAppFlagUseLightTheme) ? D2D1_COLOR_F{0.0f, 0.0f, 0.0f, 1.0f} : D2D1_COLOR_F{1.0f, 1.0f, 1.0f, 1.0f};
+          clock.brush->SetColor(text_color);
           rt->DrawText(datetime.c_str(), static_cast<UINT32>(datetime.length()), text_format.text_format, rect, clock.brush);
           rt->EndDraw();
 
@@ -387,16 +415,24 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         return 0;
       }
 
-      case WM_DEVICECHANGE: OutputDebugStringA("WM_DEVICECHANGE\n"); app->recreate_clock_windows = true; break;
-      case WM_DISPLAYCHANGE: OutputDebugStringA("WM_DISPLAYCHANGE\n"); app->recreate_clock_windows = true; break;
-      case WM_DPICHANGED: OutputDebugStringA("WM_DPICHANGED\n"); app->recreate_clock_windows = true; break;
+      case WM_WININICHANGE: {
+        // @NOTE: when mode {Dark, Light} is changed this message is received many times (> 10)
+        const wchar_t* name = reinterpret_cast<const wchar_t*>(lparam);
+        const bool mode_changed = name && (wcscmp(L"ImmersiveColorSet", name) == 0);
+        app->flags.set(kAppFlagColorModeChanged, mode_changed);
+        return 0;
+      }
+
+      case WM_DEVICECHANGE: OutputDebugStringA("WM_DEVICECHANGE\n"); app->flags.set(kAppFlagRecreateRequested); break;
+      case WM_DISPLAYCHANGE: OutputDebugStringA("WM_DISPLAYCHANGE\n"); app->flags.set(kAppFlagRecreateRequested); break;
+      case WM_DPICHANGED: OutputDebugStringA("WM_DPICHANGED\n"); app->flags.set(kAppFlagRecreateRequested); break;
       case WM_INPUTLANGCHANGE: OutputDebugStringA("WM_INPUTLANGCHANGE\n"); break;
       case WM_TIMECHANGE: OutputDebugStringA("WM_TIMECHANGE\n"); break;
 
       case WM_TIMER: {
         update_datetime(app->datetime, app->format);
-        if (app->recreate_clock_windows) {
-          app->recreate_clock_windows = false;
+        if (app->flags.test(kAppFlagRecreateRequested)) {
+          app->flags.reset(kAppFlagRecreateRequested);
 
           app->monitors = utils::get_display_monitors();
 
@@ -413,6 +449,12 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           destroy_text_formats(*app);
           create_text_formats(*app);
         }
+
+        if (app->flags.test(kAppFlagColorModeChanged)) {
+          app->flags.reset(kAppFlagColorModeChanged);
+          app->flags.set(kAppFlagUseLightTheme, read_use_light_theme_from_registry());
+        }
+
         request_repaint_for_clock_windows(*app);
         return 0;
       }
@@ -455,6 +497,8 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   if (app.dummy_window) {
     SetWindowLongPtrW(app.dummy_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
 
+    // @TODO: way to get this information without reading the registry?
+    app.flags.set(kAppFlagUseLightTheme, read_use_light_theme_from_registry());
     app.monitors = utils::get_display_monitors();
 
     D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &app.d2d);
