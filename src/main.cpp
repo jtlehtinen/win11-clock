@@ -1,13 +1,11 @@
 // @TODO: clean this mess
 // @TODO: error handling
-// @TODO: handle WM_DISPLAYCHANGE, WM_DPICHANGED, WM_INPUTLANGCHANGE, WM_DEVICECHANGE, WM_TIMECHANGE?
-// @TODO: hide when fullscreen window?
-// @TODO: timer should be one minute or one second depending on the displayed time format
-// @TODO: clock text color based on windows theme?
-// @TODO: handle WM_SYSCOLORCHANGE, WM_SETTINGCHANGE?
-// @TODO: startup feels slow
+// @TODO: hide when fullscreen window
+// @TODO: timer 1 second or 1 minute
+// @TODO: slow startup
+// @TODO: settings localization
 
-#pragma comment(lib, "advapi32.lib") // for RegGetValueW
+#pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -22,14 +20,10 @@
 #include <shlobj.h>
 #include <d2d1.h>
 #include <dwrite.h>
-//#include <uxtheme.h>
-
-static_assert(sizeof(int) == sizeof(LONG));
 
 constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
 
 namespace registry {
-
   DWORD read_dword(const std::wstring& subkey, const std::wstring& value) {
     DWORD result = 0;
     DWORD size = static_cast<DWORD>(sizeof(result));
@@ -37,13 +31,13 @@ namespace registry {
 
     return result;
   }
-
 }
 
 enum AppFlags : uint32_t {
-  kAppFlagRecreateRequested = (1 << 0),
-  kAppFlagColorModeChanged = (1 << 1),
-  kAppFlagUseLightTheme = (1 << 2),
+  kAppFlagRecreateRequested = 0,
+  kAppFlagColorModeChanged = 1,
+  kAppFlagLanguageOrRegionChanged = 2,
+  kAppFlagUseLightTheme = 3,
 };
 
 struct DateTimeFormat {
@@ -106,7 +100,6 @@ DWRITE_TEXT_ALIGNMENT get_text_alignment_for(Corner corner) {
   if (corner == Corner::BottomRight) return DWRITE_TEXT_ALIGNMENT_TRAILING;
   if (corner == Corner::TopLeft) return DWRITE_TEXT_ALIGNMENT_LEADING;
   if (corner == Corner::TopRight) return DWRITE_TEXT_ALIGNMENT_TRAILING;
-
   return DWRITE_TEXT_ALIGNMENT_LEADING;
 }
 
@@ -419,17 +412,30 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         // @NOTE: when mode {Dark, Light} is changed this message is received many times (> 10)
         const wchar_t* name = reinterpret_cast<const wchar_t*>(lparam);
         const bool mode_changed = name && (wcscmp(L"ImmersiveColorSet", name) == 0);
-        app->flags.set(kAppFlagColorModeChanged, mode_changed);
+        const bool language_or_region_changed = name && (wcscmp(L"intl", name) == 0);
+
+        if (mode_changed) app->flags.set(kAppFlagColorModeChanged, true);
+        if (language_or_region_changed) app->flags.set(kAppFlagLanguageOrRegionChanged, true);
         return 0;
       }
 
-      case WM_DEVICECHANGE: OutputDebugStringA("WM_DEVICECHANGE\n"); app->flags.set(kAppFlagRecreateRequested); break;
-      case WM_DISPLAYCHANGE: OutputDebugStringA("WM_DISPLAYCHANGE\n"); app->flags.set(kAppFlagRecreateRequested); break;
-      case WM_DPICHANGED: OutputDebugStringA("WM_DPICHANGED\n"); app->flags.set(kAppFlagRecreateRequested); break;
+      case WM_DEVICECHANGE: app->flags.set(kAppFlagRecreateRequested); break;
+      case WM_DISPLAYCHANGE: app->flags.set(kAppFlagRecreateRequested); break;
+      case WM_DPICHANGED: app->flags.set(kAppFlagRecreateRequested); break;
       case WM_INPUTLANGCHANGE: OutputDebugStringA("WM_INPUTLANGCHANGE\n"); break;
       case WM_TIMECHANGE: OutputDebugStringA("WM_TIMECHANGE\n"); break;
 
       case WM_TIMER: {
+        if (app->flags.test(kAppFlagColorModeChanged)) {
+          app->flags.reset(kAppFlagColorModeChanged);
+          app->flags.set(kAppFlagUseLightTheme, read_use_light_theme_from_registry());
+        }
+
+        if (app->flags.test(kAppFlagLanguageOrRegionChanged)) {
+          app->flags.reset(kAppFlagLanguageOrRegionChanged);
+          update_datetime_format(app->format);
+        }
+
         update_datetime(app->datetime, app->format);
         if (app->flags.test(kAppFlagRecreateRequested)) {
           app->flags.reset(kAppFlagRecreateRequested);
@@ -448,11 +454,6 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
 
           destroy_text_formats(*app);
           create_text_formats(*app);
-        }
-
-        if (app->flags.test(kAppFlagColorModeChanged)) {
-          app->flags.reset(kAppFlagColorModeChanged);
-          app->flags.set(kAppFlagUseLightTheme, read_use_light_theme_from_registry());
         }
 
         request_repaint_for_clock_windows(*app);
