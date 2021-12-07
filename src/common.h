@@ -25,7 +25,7 @@ struct Settings {
   bool primary_display = false;
   bool long_date = false;
   bool long_time = false;
-  bool hide_fullscreen = false;
+  bool hide_fullscreen = true;
 
   bool load(const std::wstring& filename);
   bool save(const std::wstring& filename);
