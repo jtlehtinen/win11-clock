@@ -142,8 +142,8 @@ ClockWindow create_clock_window(HINSTANCE instance, const Monitor& monitor, Corn
   const bool show = !monitor.is_primary() || (monitor.is_primary() && app->settings.primary_display);
   if (show) ShowWindow(window, SW_SHOW);
 
-  const Int2 size = utils::compute_clock_window_size(monitor.dpi);
-  const Int2 position = utils::compute_clock_window_position(size, monitor.position, monitor.size, corner);
+  const Int2 size = common::compute_clock_window_size(monitor.dpi);
+  const Int2 position = common::compute_clock_window_position(size, monitor.position, monitor.size, corner);
   SetWindowPos(window, HWND_TOPMOST, position.x, position.y, size.x, size.y, SWP_NOACTIVATE);
 
   HDC window_dc = GetDC(window);
@@ -193,20 +193,20 @@ void request_repaint_for_clock_windows(const App& app) {
 }
 
 void update_datetime_format(DateTimeFormat& format) {
-  format.locale = utils::get_user_default_locale_name();
-  format.short_date = utils::get_date_format(format.locale, DATE_SHORTDATE);
-  format.long_date = utils::get_date_format(format.locale, DATE_LONGDATE);
-  format.short_time = utils::get_time_format(format.locale, TIME_NOSECONDS);
-  format.long_time = utils::get_time_format(format.locale, 0);
+  format.locale = common::get_user_default_locale_name();
+  format.short_date = common::get_date_format(format.locale, DATE_SHORTDATE);
+  format.long_date = common::get_date_format(format.locale, DATE_LONGDATE);
+  format.short_time = common::get_time_format(format.locale, TIME_NOSECONDS);
+  format.long_time = common::get_time_format(format.locale, 0);
 }
 
 void update_datetime(DateTime& datetime, const DateTimeFormat& format) {
   SYSTEMTIME time;
   GetLocalTime(&time);
-  datetime.short_date = utils::format_date(time, format.locale, format.short_date);
-  datetime.long_date = utils::format_date(time, format.locale, format.long_date);
-  datetime.short_time = utils::format_time(time, format.locale, format.short_time);
-  datetime.long_time = utils::format_time(time, format.locale, format.long_time);
+  datetime.short_date = common::format_date(time, format.locale, format.short_date);
+  datetime.long_date = common::format_date(time, format.locale, format.long_date);
+  datetime.short_time = common::format_time(time, format.locale, format.short_time);
+  datetime.long_time = common::format_time(time, format.locale, format.long_time);
 }
 
 void change_settings(App* app, Settings new_settings) {
@@ -224,8 +224,8 @@ void change_settings(App* app, Settings new_settings) {
       const Monitor& monitor = app->monitors[i];
       const ClockWindow& clock = app->clocks[i];
 
-      const Int2 size = utils::window_client_size(clock.window);
-      const Int2 position = utils::compute_clock_window_position(size, monitor.position, monitor.size, app->settings.corner);
+      const Int2 size = common::window_client_size(clock.window);
+      const Int2 position = common::compute_clock_window_position(size, monitor.position, monitor.size, app->settings.corner);
       SetWindowPos(clock.window, HWND_TOPMOST, position.x, position.y, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
     }
   }
@@ -247,7 +247,7 @@ LRESULT CALLBACK window_callback(HWND window, UINT message, WPARAM wparam, LPARA
           const Float2 dpi = app->monitors[clock_index].dpi;
           ID2D1DCRenderTarget* rt = clock.rt;
 
-          const Int2 size = utils::window_client_size(window);
+          const Int2 size = common::window_client_size(window);
           RECT bind_rect = {0, 0, size.x, size.y};
           rt->BindDC(clock.memory_dc, &bind_rect);
           rt->BeginDraw();
@@ -433,7 +433,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         if (app->flags.test(kAppFlagRecreateRequested)) {
           app->flags.reset(kAppFlagRecreateRequested);
 
-          app->monitors = utils::get_display_monitors();
+          app->monitors = common::get_display_monitors();
 
           for (ClockWindow& clock : app->clocks) {
             destroy_clock_window(clock);
@@ -450,10 +450,10 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         }
 
         // @TODO: this is expensive, the desktop window count is in the hunreds
-        std::vector<HWND> desktop_windows = utils::get_desktop_windows();
+        std::vector<HWND> desktop_windows = common::get_desktop_windows();
         for (size_t i = 0; i < app->clocks.size(); ++i) {
           const Monitor& monitor = app->monitors[i];
-          const bool fullscreen = utils::monitor_has_fullscreen_window(monitor.handle, desktop_windows);
+          const bool fullscreen = common::monitor_has_fullscreen_window(monitor.handle, desktop_windows);
           const bool hide = (monitor.is_primary() && !app->settings.primary_display) || (fullscreen && app->settings.hide_fullscreen);
           const int show_command = hide ? SW_HIDE : SW_SHOW;
           ShowWindow(app->clocks[i].window, show_command);
@@ -489,7 +489,7 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   WNDCLASSW clock_window_class = {.lpfnWndProc = window_callback, .hInstance = instance, .lpszClassName = L"clock-class"};
   RegisterClassW(&clock_window_class);
 
-  const std::wstring temp_directory = utils::get_temp_directory();
+  const std::wstring temp_directory = common::get_temp_directory();
   const std::wstring settings_absolute_path = temp_directory + L"settings.dat";
   SHCreateDirectoryExW(nullptr, temp_directory.c_str(), nullptr);
   app.settings.load(settings_absolute_path);
@@ -502,7 +502,7 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
     SetWindowLongPtrW(app.dummy_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
 
     app.flags.set(kAppFlagUseLightTheme, read_use_light_theme_from_registry());
-    app.monitors = utils::get_display_monitors();
+    app.monitors = common::get_display_monitors();
 
     D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &app.d2d);
     DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&app.dwrite));

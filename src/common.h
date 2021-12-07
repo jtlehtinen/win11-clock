@@ -48,7 +48,7 @@ struct Monitor {
   }
 };
 
-namespace utils {
+namespace common {
   std::wstring get_temp_directory();
 
   std::wstring get_user_default_locale_name();
@@ -66,4 +66,6 @@ namespace utils {
 
   std::vector<HWND> get_desktop_windows();
   bool monitor_has_fullscreen_window(HMONITOR monitor, const std::vector<HWND>& windows);
+
+  void exit_with_error_message(const std::wstring& message);
 }

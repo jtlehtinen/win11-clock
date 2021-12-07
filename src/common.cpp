@@ -25,7 +25,7 @@ bool Settings::save(const std::wstring& filename) {
   return ok;
 }
 
-namespace utils {
+namespace common {
   std::wstring get_temp_directory() {
     wchar_t buffer[MAX_PATH + 1];
     if (GetTempPathW(MAX_PATH + 1, buffer) == 0) return L"";
@@ -120,7 +120,7 @@ namespace utils {
 
       const Int2 position = { rect->left, rect->top };
       const Int2 size = { rect->right - rect->left, rect->bottom - rect->top };
-      const Float2 dpi = utils::get_dpi_scale(monitor);
+      const Float2 dpi = common::get_dpi_scale(monitor);
 
       monitors->push_back(Monitor{ .handle = monitor, .position = position, .size = size, .dpi = dpi });
 
@@ -175,5 +175,10 @@ namespace utils {
     }
 
     return false;
+  }
+
+  void exit_with_error_message(const std::wstring& message) {
+    MessageBoxW(nullptr, message.c_str(), L"win11 clock", MB_ICONERROR);
+    ExitProcess(1);
   }
 }
