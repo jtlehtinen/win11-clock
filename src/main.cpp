@@ -345,7 +345,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         constexpr UINT kCmdFormatLongDate = 7;
         constexpr UINT kCmdFormatShortTime = 8;
         constexpr UINT kCmdFormatLongTime = 9;
-        constexpr UINT kCmdHideFullscreen = 10;
+        constexpr UINT kCmdOnFullscreen = 10;
         constexpr UINT kCmdOpenRegionControlPanel = 11;
         constexpr UINT kCmdQuit = 255;
 
@@ -371,7 +371,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           AppendMenuW(time_menu, checked(app->settings.long_time), kCmdFormatLongTime, app->datetime.long_time.c_str());
           AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(time_menu), L"Time Format");
 
-          AppendMenuW(menu, checked(app->settings.hide_fullscreen), kCmdHideFullscreen, L"Hide Fullscreen");
+          AppendMenuW(menu, checked(app->settings.on_fullscreen), kCmdOnFullscreen, L"On Fullscreen");
           AppendMenuW(menu, checked(app->settings.primary_display), kCmdPrimaryDisplay, L"Primary Display");
           AppendMenuW(menu, MF_STRING, kCmdOpenRegionControlPanel, L"Open Region Options");
           AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -400,7 +400,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
             case kCmdFormatShortDate: settings.long_date = false; break;
             case kCmdFormatLongTime: settings.long_time = true; break;
             case kCmdFormatShortTime: settings.long_time = false; break;
-            case kCmdHideFullscreen: settings.hide_fullscreen = !settings.hide_fullscreen; break;
+            case kCmdOnFullscreen: settings.on_fullscreen = !settings.on_fullscreen; break;
             case kCmdOpenRegionControlPanel: open_region_control_panel(); break;
           }
           if (settings != app->settings) change_settings(app, settings);
@@ -461,7 +461,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         for (size_t i = 0; i < app->clocks.size(); ++i) {
           const Monitor& monitor = app->monitors[i];
           const bool fullscreen = common::monitor_has_fullscreen_window(monitor.handle, desktop_windows);
-          const bool hide = (monitor.is_primary() && !app->settings.primary_display) || (fullscreen && app->settings.hide_fullscreen);
+          const bool hide = (monitor.is_primary() && !app->settings.primary_display) || (fullscreen && !app->settings.on_fullscreen);
           const int show_command = hide ? SW_HIDE : SW_SHOW;
           ShowWindow(app->clocks[i].window, show_command);
         }
