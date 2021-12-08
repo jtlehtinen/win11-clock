@@ -84,6 +84,10 @@ struct App {
   std::bitset<8> flags; // see AppFlags
 };
 
+void open_region_control_panel() {
+  ShellExecuteW(nullptr, L"open", L"control.exe", L"/name Microsoft.RegionAndLanguage", nullptr, SW_SHOW);
+}
+
 bool read_use_light_theme_from_registry() {
   return registry::read_dword(L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"SystemUsesLightTheme") == 1;
 }
@@ -342,6 +346,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         constexpr UINT kCmdFormatShortTime = 8;
         constexpr UINT kCmdFormatLongTime = 9;
         constexpr UINT kCmdHideFullscreen = 10;
+        constexpr UINT kCmdOpenRegionControlPanel = 11;
         constexpr UINT kCmdQuit = 255;
 
         if (lparam == WM_RBUTTONUP) {
@@ -368,6 +373,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
 
           AppendMenuW(menu, checked(app->settings.hide_fullscreen), kCmdHideFullscreen, L"Hide Fullscreen");
           AppendMenuW(menu, checked(app->settings.primary_display), kCmdPrimaryDisplay, L"Primary Display");
+          AppendMenuW(menu, MF_STRING, kCmdOpenRegionControlPanel, L"Open Region Options");
           AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
           AppendMenuW(menu, MF_STRING, kCmdQuit, L"Exit");
 
@@ -395,6 +401,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
             case kCmdFormatLongTime: settings.long_time = true; break;
             case kCmdFormatShortTime: settings.long_time = false; break;
             case kCmdHideFullscreen: settings.hide_fullscreen = !settings.hide_fullscreen; break;
+            case kCmdOpenRegionControlPanel: open_region_control_panel(); break;
           }
           if (settings != app->settings) change_settings(app, settings);
         }
