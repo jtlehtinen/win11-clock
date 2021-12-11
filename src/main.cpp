@@ -3,6 +3,7 @@
 // @TODO: timer 1 second or 1 minute
 // @TODO: slow startup
 // @TODO: settings localization
+// @TODO: always hide on primary display if bottom right corner
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "d2d1.lib")
@@ -14,12 +15,17 @@
 #pragma comment(lib, "user32.lib")
 
 #include "common.h"
+#include "app.h"
+
 #include <bitset>
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <d2d1.h>
 #include <dwrite.h>
+
+#include "common.cpp"
+#include "app.cpp"
 
 constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
 
@@ -84,6 +90,8 @@ struct App {
   std::bitset<8> flags; // see AppFlags
 };
 
+
+
 void open_region_control_panel() {
   ShellExecuteW(nullptr, L"open", L"control.exe", L"/name Microsoft.RegionAndLanguage", nullptr, SW_SHOW);
 }
@@ -135,6 +143,13 @@ TextFormat find_text_format(const App& app, Float2 dpi) {
   }
 
   return app.text_formats.front();
+}
+
+bool init_d2d_and_dwrite(App& app) {
+  D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &app.d2d);
+  DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&app.dwrite));
+  create_text_formats(app);
+  return true;
 }
 
 ClockWindow create_clock_window(HINSTANCE instance, const Monitor& monitor, Corner corner, ID2D1Factory* d2d, App* app) {
@@ -284,7 +299,9 @@ LRESULT CALLBACK window_callback(HWND window, UINT message, WPARAM wparam, LPARA
           D2D1_COLOR_F text_color = app->flags.test(kAppFlagUseLightTheme) ? D2D1_COLOR_F{0.0f, 0.0f, 0.0f, 1.0f} : D2D1_COLOR_F{1.0f, 1.0f, 1.0f, 1.0f};
           clock.brush->SetColor(text_color);
           rt->DrawText(datetime.c_str(), static_cast<UINT32>(datetime.length()), text_format.text_format, rect, clock.brush);
-          rt->EndDraw();
+
+          const bool presentationError = (rt->EndDraw() == D2DERR_RECREATE_TARGET);
+          if (presentationError) app->flags.set(kAppFlagRecreateRequested);
 
           HDC desktop_dc = GetDC(nullptr);
           POINT source_point = { };
@@ -511,28 +528,26 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
     app.flags.set(kAppFlagUseLightTheme, read_use_light_theme_from_registry());
     app.monitors = common::get_display_monitors();
 
-    D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &app.d2d);
-    DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&app.dwrite));
-    create_text_formats(app);
+    if (init_d2d_and_dwrite(app)) {
+      for (const Monitor& monitor : app.monitors) {
+        app.clocks.push_back(create_clock_window(instance, monitor, app.settings.corner, app.d2d, &app));
+      }
 
-    for (const Monitor& monitor : app.monitors) {
-      app.clocks.push_back(create_clock_window(instance, monitor, app.settings.corner, app.d2d, &app));
+      const UINT_PTR timer = SetTimer(app.dummy_window, 0, 1000, nullptr);
+      HWINEVENTHOOK hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, win_event_hook, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+
+      MSG msg = { };
+      while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+      }
+
+      // @NOTE: windows will do the clean up anyways...
+      app.settings.save(settings_absolute_path);
+
+      KillTimer(app.dummy_window, timer);
+      UnhookWinEvent(hook);
     }
-
-    const UINT_PTR timer = SetTimer(app.dummy_window, 0, 1000, nullptr);
-    HWINEVENTHOOK hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, win_event_hook, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
-
-    MSG msg = { };
-    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-      TranslateMessage(&msg);
-      DispatchMessageW(&msg);
-    }
-
-    // @NOTE: windows will do the clean up anyways...
-    app.settings.save(settings_absolute_path);
-
-    KillTimer(app.dummy_window, timer);
-    UnhookWinEvent(hook);
   }
 
   ReleaseMutex(mutex);

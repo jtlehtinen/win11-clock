@@ -12,7 +12,7 @@ copy /Y resources.res build\debug\resources.res 1>nul
 copy /Y resources.res build\release\resources.res 1>nul
 del resources.res
 
-set sources=..\..\src\main.cpp ..\..\src\common.cpp resources.res
+set sources=..\..\src\main.cpp resources.res
 
 pushd build\debug
 echo ----------------
