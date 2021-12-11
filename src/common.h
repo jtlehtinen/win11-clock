@@ -67,5 +67,8 @@ namespace common {
   std::vector<HWND> get_desktop_windows();
   bool monitor_has_fullscreen_window(HMONITOR monitor, const std::vector<HWND>& windows);
 
+  bool read_use_light_theme_from_registry();
+  void open_region_control_panel();
+
   void exit_with_error_message(const std::wstring& message);
 }

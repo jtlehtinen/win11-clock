@@ -3,6 +3,18 @@
 #include <dwmapi.h>
 #include <shellscalingapi.h>
 
+namespace {
+  namespace registry {
+    DWORD read_dword(const std::wstring& subkey, const std::wstring& value) {
+      DWORD result = 0;
+      DWORD size = static_cast<DWORD>(sizeof(result));
+      if (RegGetValueW(HKEY_CURRENT_USER, subkey.c_str(), value.c_str(), RRF_RT_DWORD, nullptr, &result, &size) != ERROR_SUCCESS) return 0;
+
+      return result;
+    }
+  }
+}
+
 bool Settings::load(const std::wstring& filename) {
   FILE* f = _wfopen(filename.c_str(), L"rb");
   if (!f) return false;
@@ -175,6 +187,14 @@ namespace common {
     }
 
     return false;
+  }
+
+  bool read_use_light_theme_from_registry() {
+    return registry::read_dword(L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"SystemUsesLightTheme") == 1;
+  }
+
+  void open_region_control_panel() {
+    ShellExecuteW(nullptr, L"open", L"control.exe", L"/name Microsoft.RegionAndLanguage", nullptr, SW_SHOW);
   }
 
   void exit_with_error_message(const std::wstring& message) {

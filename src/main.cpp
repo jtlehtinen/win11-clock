@@ -15,7 +15,6 @@
 #pragma comment(lib, "user32.lib")
 
 #include "common.h"
-#include "app.h"
 
 #include <bitset>
 #include <windows.h>
@@ -25,7 +24,6 @@
 #include <dwrite.h>
 
 #include "common.cpp"
-#include "app.cpp"
 
 constexpr UINT WM_CLOCK_NOTIFY_COMMAND = (WM_USER + 1);
 
@@ -89,16 +87,6 @@ struct App {
 
   std::bitset<8> flags; // see AppFlags
 };
-
-
-
-void open_region_control_panel() {
-  ShellExecuteW(nullptr, L"open", L"control.exe", L"/name Microsoft.RegionAndLanguage", nullptr, SW_SHOW);
-}
-
-bool read_use_light_theme_from_registry() {
-  return registry::read_dword(L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"SystemUsesLightTheme") == 1;
-}
 
 uint32_t find_clock_index(const App& app, HWND window) {
   for (size_t i = 0; i < app.clocks.size(); ++i) {
@@ -418,7 +406,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
             case kCmdFormatLongTime: settings.long_time = true; break;
             case kCmdFormatShortTime: settings.long_time = false; break;
             case kCmdOnFullscreen: settings.on_fullscreen = !settings.on_fullscreen; break;
-            case kCmdOpenRegionControlPanel: open_region_control_panel(); break;
+            case kCmdOpenRegionControlPanel: common::open_region_control_panel(); break;
           }
           if (settings != app->settings) change_settings(app, settings);
         }
@@ -445,7 +433,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
       case WM_TIMER: {
         if (app->flags.test(kAppFlagColorModeChanged)) {
           app->flags.reset(kAppFlagColorModeChanged);
-          app->flags.set(kAppFlagUseLightTheme, read_use_light_theme_from_registry());
+          app->flags.set(kAppFlagUseLightTheme, common::read_use_light_theme_from_registry());
         }
 
         if (app->flags.test(kAppFlagLanguageOrRegionChanged)) {
@@ -525,7 +513,7 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   if (app.dummy_window) {
     SetWindowLongPtrW(app.dummy_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
 
-    app.flags.set(kAppFlagUseLightTheme, read_use_light_theme_from_registry());
+    app.flags.set(kAppFlagUseLightTheme, common::read_use_light_theme_from_registry());
     app.monitors = common::get_display_monitors();
 
     if (init_d2d_and_dwrite(app)) {
