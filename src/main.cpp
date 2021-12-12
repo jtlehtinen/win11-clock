@@ -92,7 +92,7 @@ ClockWindow create_clock_window(const Monitor& monitor, Corner corner, ID2D1Fact
   HWND window = CreateWindowExW(extended_window_style, L"clock-class", L"", window_style, 0, 0, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
   SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
 
-  const bool show = !is_primary_monitor(monitor) || (is_primary_monitor(monitor) && app->settings.primary_display);
+  const bool show = !is_primary_monitor(monitor) || (is_primary_monitor(monitor) && app->settings.on_primary_display);
   if (show) ShowWindow(window, SW_SHOW);
 
   const Int2 size = common::compute_clock_window_size(monitor.dpi);
@@ -284,7 +284,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(time_menu), L"Time Format");
 
           AppendMenuW(menu, checked(app->settings.on_fullscreen), kCmdOnFullscreen, L"On Fullscreen");
-          AppendMenuW(menu, checked(app->settings.primary_display), kCmdPrimaryDisplay, L"Primary Display");
+          AppendMenuW(menu, checked(app->settings.on_primary_display), kCmdPrimaryDisplay, L"Primary Display");
           AppendMenuW(menu, MF_STRING, kCmdOpenRegionControlPanel, L"Open Region Options");
           AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
           AppendMenuW(menu, MF_STRING, kCmdQuit, L"Exit");
@@ -303,7 +303,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           Settings settings = app->settings;
           switch (cmd) {
             case kCmdQuit: DestroyWindow(window); break;
-            case kCmdPrimaryDisplay: settings.primary_display = !settings.primary_display; break;
+            case kCmdPrimaryDisplay: settings.on_primary_display = !settings.on_primary_display; break;
             case kCmdPositionBottomLeft: settings.corner = Corner::BottomLeft; break;
             case kCmdPositionBottomRight: settings.corner = Corner::BottomRight; break;
             case kCmdPositionTopLeft: settings.corner = Corner::TopLeft; break;
@@ -351,7 +351,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
         for (const ClockWindow& clock : app->clocks) {
           if (HMONITOR monitor = MonitorFromWindow(clock.window, MONITOR_DEFAULTTONULL); monitor) {
             const bool fullscreen = common::monitor_has_fullscreen_window(monitor, desktop_windows);
-            const bool hide = (clock.on_primary_monitor && !app->settings.primary_display) || (fullscreen && !app->settings.on_fullscreen);
+            const bool hide = (clock.on_primary_monitor && !app->settings.on_primary_display) || (fullscreen && !app->settings.on_fullscreen);
             ShowWindow(clock.window, hide ? SW_HIDE : SW_SHOW);
           }
           InvalidateRect(clock.window, nullptr, FALSE);

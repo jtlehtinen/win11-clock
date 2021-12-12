@@ -22,9 +22,9 @@ inline bool is_right(Corner corner) { return !is_left(corner); }
 
 struct Settings {
   Corner corner = Corner::BottomRight;
-  bool primary_display = false;
   bool long_date = false;
   bool long_time = false;
+  bool on_primary_display = false;
   bool on_fullscreen = false;
 };
 
