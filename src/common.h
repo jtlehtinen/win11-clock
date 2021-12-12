@@ -26,27 +26,25 @@ struct Settings {
   bool long_date = false;
   bool long_time = false;
   bool on_fullscreen = false;
-
-  bool load(const std::wstring& filename);
-  bool save(const std::wstring& filename);
-
-  bool operator ==(Settings other) const { return memcmp(this, &other, sizeof(Settings)) == 0; }
-  bool operator !=(Settings other) const { return !(*this == other); }
 };
 
 static_assert(sizeof(Settings) == 5);
+
+Settings load_settings(const std::wstring& filename);
+bool save_settings(const std::wstring& filename, Settings settings);
+
+inline bool operator ==(Settings lhs, Settings rhs) { return memcmp(&lhs, &rhs, sizeof(Settings)) == 0; }
+inline bool operator !=(Settings lhs, Settings rhs) { return !(lhs == rhs); }
 
 struct Monitor {
   HMONITOR handle = nullptr;
   Int2 position = { };
   Int2 size = { };
   Float2 dpi = {1.0f, 1.0f};
-
-  bool is_primary() const {
-    // https://devblogs.microsoft.com/oldnewthing/20070809-00/?p=25643
-    return (position.x == 0) && (position.y == 0);
-  }
 };
+
+// https://devblogs.microsoft.com/oldnewthing/20070809-00/?p=25643
+inline bool is_primary_monitor(const Monitor& monitor) { return (monitor.position.x == 0) && (monitor.position.y == 0); }
 
 namespace common {
   std::wstring get_temp_directory();

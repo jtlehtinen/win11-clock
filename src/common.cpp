@@ -15,23 +15,22 @@ namespace {
   }
 }
 
-bool Settings::load(const std::wstring& filename) {
+Settings load_settings(const std::wstring& filename) {
   FILE* f = _wfopen(filename.c_str(), L"rb");
-  if (!f) return false;
+  if (!f) return { };
 
   Settings settings;
   bool ok = (fread(&settings, sizeof(settings), 1, f) == 1);
-  if (ok) *this = settings;
 
   fclose(f);
-  return ok;
+  return ok ? settings : Settings{ };
 }
 
-bool Settings::save(const std::wstring& filename) {
+bool save_settings(const std::wstring& filename, Settings settings) {
   FILE* f = _wfopen(filename.c_str(), L"wb");
   if (!f) return false;
 
-  bool ok = (fwrite(this, sizeof(*this), 1, f) == 1);
+  bool ok = (fwrite(&settings, sizeof(settings), 1, f) == 1);
 
   fclose(f);
   return ok;
@@ -180,9 +179,11 @@ namespace common {
     if (GetMonitorInfo(monitor, &info) == 0) return false;
 
     for (HWND window : windows) {
-      RECT wr;
-      if (DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &wr, static_cast<DWORD>(sizeof(wr))) == S_OK) {
-        if (EqualRect(&info.rcMonitor, &wr)) return true;
+      if (IsWindowVisible(window)) {
+        RECT wr;
+        if (DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &wr, static_cast<DWORD>(sizeof(wr))) == S_OK) {
+          if (EqualRect(&info.rcMonitor, &wr)) return true;
+        }
       }
     }
 

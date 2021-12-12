@@ -92,7 +92,7 @@ ClockWindow create_clock_window(const Monitor& monitor, Corner corner, ID2D1Fact
   HWND window = CreateWindowExW(extended_window_style, L"clock-class", L"", window_style, 0, 0, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
   SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
 
-  const bool show = !monitor.is_primary() || (monitor.is_primary() && app->settings.primary_display);
+  const bool show = !is_primary_monitor(monitor) || (is_primary_monitor(monitor) && app->settings.primary_display);
   if (show) ShowWindow(window, SW_SHOW);
 
   const Int2 size = common::compute_clock_window_size(monitor.dpi);
@@ -127,7 +127,7 @@ ClockWindow create_clock_window(const Monitor& monitor, Corner corner, ID2D1Fact
   format->SetTextAlignment(get_text_alignment_for(app->settings.corner));
   format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-  return ClockWindow{.window = window, .rt = rt, .brush = brush, .memory_dc = memory_dc, .bitmap = bitmap, .text_format = format, .dpi_scale = monitor.dpi.x, .on_primary_monitor = monitor.is_primary()};
+  return ClockWindow{.window = window, .rt = rt, .brush = brush, .memory_dc = memory_dc, .bitmap = bitmap, .text_format = format, .dpi_scale = monitor.dpi.x, .on_primary_monitor = is_primary_monitor(monitor)};
 };
 
 void destroy_clock_window(ClockWindow& clock) {
@@ -147,7 +147,7 @@ const ClockWindow* find_clock_by_hwnd(const App& app, HWND window) {
   return nullptr;
 }
 
-bool init_d2d_and_dwrite(App& app) {
+bool init_direct2d(App& app) {
   return (D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &app.d2d) == S_OK) &&
     (DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&app.dwrite)) == S_OK);
 }
@@ -388,12 +388,12 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   SHCreateDirectoryExW(nullptr, temp_directory.c_str(), nullptr);
 
   const std::wstring settings_absolute_path = temp_directory + L"settings.dat";
-  app.settings.load(settings_absolute_path);
+  app.settings = load_settings(settings_absolute_path);
 
   if (HWND dummy_window = CreateWindowExW(WS_EX_TOOLWINDOW, L"dummy-class", L"", 0, 0, 0, 1, 1, nullptr, nullptr, instance, nullptr); dummy_window) {
     SetWindowLongPtrW(dummy_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
 
-    if (init_d2d_and_dwrite(app)) {
+    if (init_direct2d(app)) {
       update_datetime_format(app.format);
       update_datetime(app.datetime, app.format);
 
@@ -410,7 +410,7 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
         DispatchMessageW(&msg);
       }
 
-      app.settings.save(settings_absolute_path);
+      save_settings(settings_absolute_path, app.settings);
       KillTimer(dummy_window, timer);
       UnhookWinEvent(hook);
     }
