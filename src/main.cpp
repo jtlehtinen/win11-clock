@@ -325,8 +325,8 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
 
       case WM_WININICHANGE: {
         const wchar_t* name = reinterpret_cast<const wchar_t*>(lparam);
-        if (wcscmp(L"ImmersiveColorSet", name) == 0) app->transient_flags.set(kTransientAppFlagColorModeChanged, true);
-        if (wcscmp(L"intl", name) == 0) app->transient_flags.set(kTransientAppFlagLanguageOrRegionChanged, true);
+        if (name && wcscmp(L"ImmersiveColorSet", name) == 0) app->transient_flags.set(kTransientAppFlagColorModeChanged, true);
+        if (name && wcscmp(L"intl", name) == 0) app->transient_flags.set(kTransientAppFlagLanguageOrRegionChanged, true);
         return 0;
       }
 
