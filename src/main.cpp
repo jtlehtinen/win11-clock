@@ -92,12 +92,10 @@ ClockWindow create_clock_window(const Monitor& monitor, Corner corner, ID2D1Fact
   HWND window = CreateWindowExW(extended_window_style, L"clock-class", L"", window_style, 0, 0, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
   SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
 
-  const bool show = !is_primary_monitor(monitor) || (is_primary_monitor(monitor) && app->settings.on_primary_display);
-  if (show) ShowWindow(window, SW_SHOW);
-
   const Int2 size = common::compute_clock_window_size(monitor.dpi);
   const Int2 position = common::compute_clock_window_position(size, monitor.position, monitor.size, corner);
-  SetWindowPos(window, HWND_TOPMOST, position.x, position.y, size.x, size.y, SWP_NOACTIVATE);
+  const UINT show_flag = (is_primary_monitor(monitor) && !app->settings.on_primary_display) ? static_cast<UINT>(SWP_HIDEWINDOW) : static_cast<UINT>(SWP_SHOWWINDOW);
+  SetWindowPos(window, HWND_TOPMOST, position.x, position.y, size.x, size.y, SWP_NOACTIVATE | show_flag);
 
   HDC window_dc = GetDC(window);
   HDC memory_dc = CreateCompatibleDC(window_dc);
