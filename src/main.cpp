@@ -26,6 +26,7 @@ enum TransientAppFlags : uint32_t {
   kTransientAppFlagRecreateRequested = 0,
   kTransientAppFlagColorModeChanged = 1,
   kTransientAppFlagLanguageOrRegionChanged = 2,
+  kTransientAppFlagSettingsChanged = 3,
 };
 
 struct DateTimeFormat {
@@ -80,6 +81,7 @@ struct App {
   IDWriteFactory* dwrite = nullptr;
   std::bitset<8> transient_flags; // see TransientAppFlags
   std::bitset<8> flags; // see AppFlags
+  std::wstring settings_absolute_path;
 };
 
 DWRITE_TEXT_ALIGNMENT get_text_alignment_for(Corner corner) {
@@ -315,6 +317,7 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
           }
           if (settings != app->settings) {
             app->settings = settings;
+            app->transient_flags.set(kTransientAppFlagSettingsChanged);
             app->transient_flags.set(kTransientAppFlagRecreateRequested);
           }
         }
@@ -337,10 +340,12 @@ LRESULT CALLBACK dummy_window_callback(HWND window, UINT message, WPARAM wparam,
       case WM_TIMER: {
         if (app->transient_flags.test(kTransientAppFlagColorModeChanged)) app->flags.set(kAppFlagUseLightTheme, common::read_use_light_theme_from_registry());
         if (app->transient_flags.test(kTransientAppFlagLanguageOrRegionChanged)) update_datetime_format(app->format);
+        if (app->transient_flags.test(kTransientAppFlagSettingsChanged)) save_settings(app->settings_absolute_path, app->settings);
         if (app->transient_flags.test(kTransientAppFlagRecreateRequested)) {
           destroy_clock_windows(*app);
           create_clock_windows(*app);
         }
+
         app->transient_flags.reset();
         update_datetime(app->datetime, app->format);
 
@@ -385,8 +390,8 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
   const std::wstring temp_directory = common::get_temp_directory();
   SHCreateDirectoryExW(nullptr, temp_directory.c_str(), nullptr);
 
-  const std::wstring settings_absolute_path = temp_directory + L"settings.dat";
-  app.settings = load_settings(settings_absolute_path);
+  app.settings_absolute_path = temp_directory + L"settings.dat";
+  app.settings = load_settings(app.settings_absolute_path);
 
   if (HWND dummy_window = CreateWindowExW(WS_EX_TOOLWINDOW, L"dummy-class", L"", 0, 0, 0, 1, 1, nullptr, nullptr, instance, nullptr); dummy_window) {
     SetWindowLongPtrW(dummy_window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
@@ -408,7 +413,7 @@ int CALLBACK wWinMain(HINSTANCE instance, HINSTANCE ignored, PWSTR command_line,
         DispatchMessageW(&msg);
       }
 
-      save_settings(settings_absolute_path, app.settings);
+      save_settings(app.settings_absolute_path, app.settings);
       KillTimer(dummy_window, timer);
       UnhookWinEvent(hook);
     }
